@@ -1,5 +1,6 @@
 """Owned-window callback tests; no OS input or desktop automation."""
 from pathlib import Path
+import gc
 import tempfile
 import time
 import unittest
@@ -23,6 +24,7 @@ class WindowTests(unittest.TestCase):
             self.root = tk.Tk()
         except tk.TclError as error:
             self.skipTest("No graphical display: " + str(error))
+        self.addCleanup(self.cleanup_window)
         self.root.withdraw()
         self.folder = tempfile.TemporaryDirectory()
         self.path = Path(self.folder.name) / "events.sqlite3"
@@ -34,11 +36,17 @@ class WindowTests(unittest.TestCase):
         self.app = CompanionWindow(self.root, controller)
         self.pump()
 
-    def tearDown(self):
+    def cleanup_window(self):
         if hasattr(self, "app"):
             self.app.close()
+            # Finish queued work while the main thread still owns every Tk
+            # object. A later test's worker must never collect an old window.
+            self.app.worker.shutdown(wait=True)
+            self.app = None
         elif hasattr(self, "root"):
             self.root.destroy()
+        self.root = None
+        gc.collect()
         if hasattr(self, "folder"):
             self.folder.cleanup()
 
