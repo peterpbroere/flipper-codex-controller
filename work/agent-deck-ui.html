@@ -1,0 +1,249 @@
+<div id="agent-deck-preview">
+  <style>
+    #agent-deck-preview { color-scheme: light dark; font-family: system-ui, sans-serif; color: light-dark(#292b2a,#e6e8e4); }
+    #agent-deck-preview .preview-stage { min-height: 420px; padding: 44px 12px 24px; display: grid; place-items: center; box-sizing: border-box; }
+    #agent-deck-preview .device { width: min(100%, 504px); background: #e98c32; border: 2px solid #ac6124; border-radius: 26px; padding: 22px; box-sizing: border-box; color: #242720; }
+    #agent-deck-preview .device-label { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font: 500 12px system-ui,sans-serif; letter-spacing: .1em; }
+    #agent-deck-preview .screen-bezel { padding: 10px; border-radius: 8px; background: #30352e; }
+    #agent-deck-preview canvas { display: block; width: 100%; aspect-ratio: 2 / 1; background: #c4d0a7; image-rendering: pixelated; }
+    #agent-deck-preview .keys { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; max-width: 250px; margin: 16px auto 0; }
+    #agent-deck-preview .keys button { min-height: 38px; border-radius: 7px; border: 1px solid #272d27; background: #3c443b; color: #f3f4e8; font: 500 12px system-ui,sans-serif; }
+    #agent-deck-preview .keys button:active { background: #252e25; }
+    #agent-deck-preview .keys button[data-key="up"] { grid-column: 2; }
+    #agent-deck-preview .keys button[data-key="left"] { grid-column: 1; grid-row: 2; }
+    #agent-deck-preview .keys button[data-key="ok"] { grid-column: 2; grid-row: 2; }
+    #agent-deck-preview .keys button[data-key="right"] { grid-column: 3; grid-row: 2; }
+    #agent-deck-preview .keys button[data-key="down"] { grid-column: 2; grid-row: 3; }
+    #agent-deck-preview .keys button[data-key="back"] { grid-column: 3; grid-row: 3; }
+    #agent-deck-preview .assistive { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    @media (pointer: coarse) { #agent-deck-preview .keys button { min-height: 44px; } }
+    @media (max-width: 400px) { #agent-deck-preview .device { padding: 14px; border-radius: 20px; } #agent-deck-preview .preview-stage { padding-inline: 0; } }
+  </style>
+  <div class="viz-carousel viz-dotted-background" aria-label="Flipper overview layouts">
+    <section data-variant="Roomy list" aria-label="Three agent rows">
+      <div class="preview-stage">
+        <div class="device" data-rows="3" aria-label="Roomy Agent Deck interface">
+          <div class="device-label"><span>AGENT DECK</span><span>128 × 64</span></div>
+          <div class="screen-bezel"><canvas width="128" height="64" role="img" aria-label="Three row agent overview"></canvas></div>
+          <div class="keys" aria-label="Flipper buttons">
+            <button type="button" class="cursor-interaction" data-key="up" aria-label="Previous agent">Up</button>
+            <button type="button" class="cursor-interaction" data-key="left" aria-label="Return to overview">Left</button>
+            <button type="button" class="cursor-interaction" data-key="ok">OK</button>
+            <button type="button" class="cursor-interaction" data-key="right" aria-label="Next agent needing attention">Right</button>
+            <button type="button" class="cursor-interaction" data-key="down" aria-label="Next agent">Down</button>
+            <button type="button" class="cursor-interaction" data-key="back">Back</button>
+          </div>
+          <span class="assistive" aria-live="polite"></span>
+        </div>
+      </div>
+    </section>
+    <section data-variant="Compact list" aria-label="Four agent rows" hidden>
+      <div class="preview-stage">
+        <div class="device" data-rows="4" aria-label="Compact Agent Deck interface">
+          <div class="device-label"><span>AGENT DECK</span><span>128 × 64</span></div>
+          <div class="screen-bezel"><canvas width="128" height="64" role="img" aria-label="Four row agent overview"></canvas></div>
+          <div class="keys" aria-label="Flipper buttons">
+            <button type="button" class="cursor-interaction" data-key="up" aria-label="Previous agent">Up</button>
+            <button type="button" class="cursor-interaction" data-key="left" aria-label="Return to overview">Left</button>
+            <button type="button" class="cursor-interaction" data-key="ok">OK</button>
+            <button type="button" class="cursor-interaction" data-key="right" aria-label="Next agent needing attention">Right</button>
+            <button type="button" class="cursor-interaction" data-key="down" aria-label="Next agent">Down</button>
+            <button type="button" class="cursor-interaction" data-key="back">Back</button>
+          </div>
+          <span class="assistive" aria-live="polite"></span>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+    (() => {
+      const root = document.getElementById('agent-deck-preview');
+      const glyphs = {
+        ' ': ['00000','00000','00000','00000','00000','00000','00000'],
+        A:['01110','10001','10001','11111','10001','10001','10001'],
+        B:['11110','10001','10001','11110','10001','10001','11110'],
+        C:['01111','10000','10000','10000','10000','10000','01111'],
+        D:['11110','10001','10001','10001','10001','10001','11110'],
+        E:['11111','10000','10000','11110','10000','10000','11111'],
+        F:['11111','10000','10000','11110','10000','10000','10000'],
+        G:['01111','10000','10000','10111','10001','10001','01111'],
+        H:['10001','10001','10001','11111','10001','10001','10001'],
+        I:['11111','00100','00100','00100','00100','00100','11111'],
+        J:['00111','00010','00010','00010','10010','10010','01100'],
+        K:['10001','10010','10100','11000','10100','10010','10001'],
+        L:['10000','10000','10000','10000','10000','10000','11111'],
+        M:['10001','11011','10101','10101','10001','10001','10001'],
+        N:['10001','11001','10101','10011','10001','10001','10001'],
+        O:['01110','10001','10001','10001','10001','10001','01110'],
+        P:['11110','10001','10001','11110','10000','10000','10000'],
+        Q:['01110','10001','10001','10001','10101','10010','01101'],
+        R:['11110','10001','10001','11110','10100','10010','10001'],
+        S:['01111','10000','10000','01110','00001','00001','11110'],
+        T:['11111','00100','00100','00100','00100','00100','00100'],
+        U:['10001','10001','10001','10001','10001','10001','01110'],
+        V:['10001','10001','10001','10001','10001','01010','00100'],
+        W:['10001','10001','10001','10101','10101','10101','01010'],
+        X:['10001','10001','01010','00100','01010','10001','10001'],
+        Y:['10001','10001','01010','00100','00100','00100','00100'],
+        Z:['11111','00001','00010','00100','01000','10000','11111'],
+        '0':['01110','10001','10011','10101','11001','10001','01110'],
+        '1':['00100','01100','00100','00100','00100','00100','01110'],
+        '2':['01110','10001','00001','00010','00100','01000','11111'],
+        '3':['11110','00001','00001','01110','00001','00001','11110'],
+        '4':['00010','00110','01010','10010','11111','00010','00010'],
+        '5':['11111','10000','10000','11110','00001','00001','11110'],
+        '6':['01110','10000','10000','11110','10001','10001','01110'],
+        '7':['11111','00001','00010','00100','01000','01000','01000'],
+        '8':['01110','10001','10001','01110','10001','10001','01110'],
+        '9':['01110','10001','10001','01111','00001','00001','01110'],
+        '!':['00100','00100','00100','00100','00100','00000','00100'],
+        '>':['10000','01000','00100','00010','00100','01000','10000'],
+        ':':['00000','00100','00100','00000','00100','00100','00000'],
+        '/':['00001','00001','00010','00100','01000','10000','10000'],
+        '-':['00000','00000','00000','11111','00000','00000','00000'],
+        '+':['00000','00100','00100','11111','00100','00100','00000'],
+        '?':['01110','10001','00001','00010','00100','00000','00100'],
+        '.':['00000','00000','00000','00000','00000','00100','00100']
+      };
+      const agents = [
+        {id:'api', name:'API SERVICE', full:'API SERVICE', state:'WAIT', reason:'APPROVAL NEEDED', detail:'RUN UNIT TESTS?'},
+        {id:'tests', name:'TESTS', full:'TESTS', state:'RUN', reason:'WORKING', detail:'WRITING TEST CASES'},
+        {id:'refactor', name:'REFACTOR', full:'REFACTOR', state:'DONE', reason:'TURN FINISHED', detail:'REFACTOR COMPLETE'},
+        {id:'frontend', name:'FRONTEND', full:'FRONTEND', state:'WAIT', reason:'QUESTION', detail:'WHICH LAYOUT?'},
+        {id:'docs', name:'DOCS', full:'DOCUMENTATION', state:'RUN', reason:'WORKING', detail:'UPDATING README'},
+        {id:'build', name:'BUILD', full:'BUILD', state:'ERR', reason:'ERROR', detail:'BUILD FAILED'}
+      ];
+      const views = [];
+      const remembered = window.openai?.widgetState?.privateContent || {};
+      const save = () => {
+        const privateContent = {};
+        for (const view of views) privateContent[view.rows] = {...view.state};
+        window.openai?.setWidgetState?.({
+          modelContent: {layouts:['Roomy list: 3 rows','Compact list: 4 rows'], vibration: views[0]?.state.vibration},
+          privateContent
+        })?.catch(() => {});
+      };
+      for (const device of root.querySelectorAll('.device')) {
+        const rows = Number(device.dataset.rows);
+        const state = {selected:0, top:0, screen:'overview', vibration:true, count:6};
+        const restore = (source) => {
+          if (!source || typeof source !== 'object') return;
+          if (typeof source.vibration === 'boolean') state.vibration = source.vibration;
+          if (Number.isInteger(source.count)) state.count = Math.min(8,Math.max(3,source.count));
+          if (Number.isInteger(source.selected)) state.selected = Math.min(state.count-1,Math.max(0,source.selected));
+          if (['overview','detail','settings','focus'].includes(source.screen)) state.screen = source.screen;
+        };
+        restore(remembered[rows]);
+        const canvas = device.querySelector('canvas');
+        const ctx = canvas.getContext('2d');
+        const ink = '#263321', paper = '#c4d0a7';
+        const text = (label,x,y,color=ink) => {
+          ctx.fillStyle = color;
+          for (const char of label.toUpperCase()) {
+            const glyph = glyphs[char] || glyphs['?'];
+            glyph.forEach((line,dy) => [...line].forEach((pixel,dx) => {
+              if (pixel === '1' && x+dx < 128) ctx.fillRect(x+dx,y+dy,1,1);
+            }));
+            x += 6;
+          }
+        };
+        const line = (y) => {ctx.fillStyle = ink; ctx.fillRect(0,y,128,1);};
+        const getAgents = () => [...agents,
+          {id:'review',name:'REVIEW',full:'CODE REVIEW',state:'IDLE',reason:'READY',detail:'NO ACTIVE TURN'},
+          {id:'data',name:'DATA',full:'DATA',state:'RUN',reason:'WORKING',detail:'CHECKING IMPORTS'}
+        ].slice(0,state.count);
+        const render = () => {
+          const active = getAgents();
+          state.selected = Math.min(active.length-1,Math.max(0,state.selected));
+          if (state.selected < state.top) state.top = state.selected;
+          if (state.selected >= state.top + rows) state.top = state.selected - rows + 1;
+          state.top = Math.min(Math.max(0,active.length-rows),Math.max(0,state.top));
+          const agent = active[state.selected];
+          ctx.fillStyle = paper; ctx.fillRect(0,0,128,64);
+          if (state.screen === 'overview') {
+            text('AGENTS',1,1); text(`${state.selected+1}/${active.length}`,48,1);
+            text(`!${active.filter(a=>a.state==='WAIT'||a.state==='ERR').length}`,70,1);
+            text(state.vibration ? 'V+' : 'V-',88,1); text('USB',109,1); line(10);
+            for(let slot=0;slot<rows;slot++) {
+              const index = state.top+slot;
+              if(index>=active.length) break;
+              const current = active[index];
+              const y = 13+slot*(rows===3?13:10);
+              const selected = index===state.selected;
+              if(selected) {ctx.fillStyle=ink;ctx.fillRect(0,y-2,123,rows===3?12:10);}
+              const color = selected?paper:ink;
+              text(current.state==='WAIT'||current.state==='ERR'?'!':' ',2,y,color);
+              text(current.name.slice(0,11),10,y,color);
+              text(current.state,97,y,color);
+            }
+            if(active.length>rows) {
+              ctx.fillStyle=ink;ctx.fillRect(126,12,1,37);
+              const height=Math.floor(37*rows/active.length);
+              ctx.fillRect(125,12+Math.floor((37-height)*state.top/(active.length-rows)),3,height);
+            }
+            line(52);text('OK:DETAIL >:NEXT!',1,56);
+          } else if (state.screen === 'settings') {
+            text('SETTINGS',1,1);line(10);
+            ctx.fillStyle=ink;ctx.fillRect(0,15,128,12);
+            text('VIBRATION',3,18,paper);text(state.vibration?'ON':'OFF',103,18,paper);
+            text('ONCE PER NEW ALERT',1,35);
+            line(52);text('OK:TOGGLE BACK:LIST',1,56);
+          } else if (state.screen === 'focus') {
+            text(agent.name,1,1);line(10);
+            text('OPEN ON PC',1,19);text('FOCUS REQUESTED',1,32);
+            line(52);text('BACK:DETAILS',1,56);
+          } else {
+            text(agent.full.slice(0,18),1,1);line(10);
+            text(agent.reason,1,17);text(agent.detail,1,31);
+            text(`${state.selected+1}/${active.length}`,1,43);
+            line(52);text('OK:OPEN PC BACK:LIST',1,56);
+          }
+          const summary = state.screen==='settings'
+            ? `Settings. Vibration ${state.vibration?'on':'off'}. OK toggles vibration. Back returns to list.`
+            : `${state.screen}. Agent ${state.selected+1} of ${active.length}: ${agent.full}, ${agent.reason}. Vibration ${state.vibration?'on':'off'}.`;
+          canvas.setAttribute('aria-label',summary);
+          device.querySelector('.assistive').textContent=summary;
+        };
+        const press = (key) => {
+          const active=getAgents();
+          if(state.screen==='settings') {
+            if(key==='ok') state.vibration=!state.vibration;
+            if(key==='back'||key==='left') state.screen='overview';
+          } else if(state.screen==='focus') {
+            if(key==='back'||key==='left') state.screen='detail';
+          } else if(state.screen==='detail') {
+            if(key==='ok') state.screen='focus';
+            if(key==='back'||key==='left') state.screen='overview';
+          } else {
+            if(key==='up') state.selected=(state.selected+active.length-1)%active.length;
+            if(key==='down') state.selected=(state.selected+1)%active.length;
+            if(key==='right') {
+              for(let n=1;n<=active.length;n++) {
+                const index=(state.selected+n)%active.length;
+                if(active[index].state==='WAIT'||active[index].state==='ERR') {state.selected=index;break;}
+              }
+            }
+            if(key==='ok') state.screen='detail';
+            if(key==='back') state.screen='settings';
+          }
+          render();save();
+        };
+        for(const button of device.querySelectorAll('[data-key]')) {
+          button.addEventListener('click',()=>press(button.dataset.key));
+        }
+        views.push({state,rows,render,restore});
+        render();
+        if(globalThis.Tweak) {
+          const tweak=new Tweak({container:device,onChange:()=>{render();save();}});
+          tweak.addSlider(state,'count',{label:'Agent count',min:3,max:8,step:1});
+          tweak.addToggle(state,'vibration',{label:'Vibration enabled'});
+        }
+      }
+      window.addEventListener('openai:set_globals',event=>{
+        const saved=event.detail?.globals?.widgetState?.privateContent;
+        if(!saved) return;
+        for(const view of views) {view.restore(saved[view.rows]);view.render();}
+      });
+    })();
+  </script>
+</div>

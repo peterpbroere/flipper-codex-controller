@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flipper-agent-deck"
+version = "0.1.0"
+description = "A Flipper Zero dashboard and USB controller for coding agents"
+requires-python = ">=3.9"
+dependencies = ["pyserial>=3.5,<4", "psutil>=5.9,<8", "websocket-client>=1.8,<2"]
+
+[project.scripts]
+agent-deck = "agent_deck.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["bridge"]

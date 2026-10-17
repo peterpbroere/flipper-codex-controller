@@ -1,0 +1,174 @@
+"""Request routing, expiry, and capability tests without running an AI turn."""
+import copy
+import unittest
+from unittest.mock import patch
+
+from agent_deck.controls import Controls, CONTINUE_TEXT, review_request
+
+FIRST = "01a14af1-cf93-7563-8aa2-719a56c7e167"
+SECOND = "01a14a17-6b50-78e1-a12d-49e8235461bc"
+
+
+class FakeRPC:
+    def __init__(self, callback):
+        self.callback = callback
+        self.connected = False
+        self.calls = []
+        self.replies = []
+        self.statuses = {FIRST: "active", SECOND: "idle"}
+
+    def connect(self):
+        self.connected = True
+
+    def close(self):
+        self.connected = False
+
+    def request(self, method, params):
+        self.calls.append((method, copy.deepcopy(params)))
+        if method == "thread/loaded/list":
+            return {"data": list(self.statuses), "nextCursor": None}
+        if method in {"thread/resume", "thread/read"}:
+            return {"thread": {"status": {"type": self.statuses[params["threadId"]]}}}
+        if method == "thread/turns/list":
+            return {"data": [{"id": "turn-" + params["threadId"], "status": "inProgress"}]}
+        return {}
+
+    def respond(self, request_id, result):
+        self.replies.append((request_id, result))
+        self.callback({"method": "serverRequest/resolved", "params": {"threadId": FIRST, "requestId": request_id}})
+
+
+def approval(request="request-1", command="echo hello", **kwargs):
+    return {"id": request, "method": "item/commandExecution/requestApproval", "params": {
+        "threadId": FIRST, "turnId": "turn-" + FIRST, "itemId": "item-" + request,
+        "command": command, "cwd": "C:\\dev", **kwargs}}
+
+
+class ControlTests(unittest.TestCase):
+    def setUp(self):
+        self.controls = Controls(FakeRPC)
+        self.rows = [{"session_id": FIRST}, {"session_id": SECOND}]
+        self.controls.sync(self.rows, force=True)
+        self.rpc = self.controls.rpc
+
+    def tearDown(self):
+        self.controls.close()
+
+    def row(self, thread=FIRST, device=False):
+        return self.controls.decorate([{"session_id": thread}], device=device)[0]
+
+    def test_attach_only_loaded_threads_without_setting_overrides(self):
+        resumes = [p for m, p in self.rpc.calls if m == "thread/resume"]
+        self.assertEqual(1, len(resumes))  # Idle threads are read, never held open.
+        self.assertTrue(all(set(p) == {"threadId", "excludeTurns"} for p in resumes))
+        self.assertIn("stop", self.row()["actions"])
+        self.assertNotIn("continue", self.row()["actions"])
+        self.assertIn("continue", self.row(SECOND)["actions"])
+
+    def test_stop_targets_exact_turn_and_consumes_token(self):
+        token = self.row()["control_token"]
+        self.controls.execute(FIRST, "stop", token)
+        self.assertIn(("turn/interrupt", {"threadId": FIRST, "turnId": "turn-" + FIRST}), self.rpc.calls)
+        with self.assertRaises(ValueError):
+            self.controls.execute(FIRST, "stop", token)
+
+    def test_continue_sends_only_the_preset_to_selected_thread(self):
+        self.controls.execute(SECOND, "continue", self.row(SECOND)["control_token"])
+        method, params = self.rpc.calls[-1]
+        self.assertEqual("turn/start", method)
+        self.assertEqual(SECOND, params["threadId"])
+        self.assertEqual([{"type": "text", "text": CONTINUE_TEXT}], params["input"])
+        self.assertEqual({"threadId", "input", "clientUserMessageId"}, set(params))
+
+    def test_approval_and_rejection_address_exact_request_and_never_persist_policy(self):
+        for verb, decision in (("approve", "accept"), ("reject", "decline")):
+            self.controls._message(approval(verb))
+            other = self.row(SECOND)["control_token"]
+            self.controls.execute(FIRST, verb, self.row()["control_token"])
+            self.assertEqual((verb, {"decision": decision}), self.rpc.replies[-1])
+            self.assertEqual(other, self.row(SECOND)["control_token"])
+
+    def test_parallel_resolution_and_pc_answer_invalidate_stale_screen(self):
+        self.controls._message(approval("one"))
+        self.controls._message(approval("two"))
+        old = self.row()["control_token"]
+        self.controls._message({"method": "serverRequest/resolved", "params": {"threadId": FIRST, "requestId": "one"}})
+        with self.assertRaises(ValueError):
+            self.controls.execute(FIRST, "approve", old)
+        self.assertEqual("echo hello", self.controls.contexts[FIRST].requests["two"]["message"]["params"]["command"])
+
+    def test_disconnect_and_reconnect_cannot_replay_approval(self):
+        self.controls._message(approval())
+        token = self.row()["control_token"]
+        self.rpc.connected = False
+        self.assertEqual([], self.row()["actions"])
+        self.controls.sync(self.rows, force=True)
+        with self.assertRaises(ValueError):
+            self.controls.execute(FIRST, "approve", token)
+
+    def test_long_or_non_ascii_request_requires_pc_review(self):
+        for command in ("echo " + "x" * 600, "echo å"):
+            self.controls._message(approval(command=command))
+            self.assertIn("approve", self.row()["actions"])
+            self.assertNotIn("approve", self.row(device=True)["actions"])
+            self.assertIn("reject", self.row(device=True)["actions"])
+            self.controls.contexts[FIRST].requests.clear()
+
+    def test_no_hidden_scope_and_respect_available_decisions(self):
+        review = review_request(approval(availableDecisions=["decline"]), {})
+        self.assertFalse(review["approve"])
+        self.assertTrue(review["reject"])
+        review = review_request(approval(kind="stdin"), {})
+        self.assertFalse(review["approve"])
+        review = review_request(approval(command=None), {})
+        self.assertFalse(review["approve"])
+
+    def test_native_cli_cancel_is_available_as_reject_when_decline_is_absent(self):
+        self.controls._message(approval(availableDecisions=["accept", {"acceptWithExecpolicyAmendment": {}}, "cancel"]))
+        self.assertIn("approve", self.row(device=True)["actions"])
+        self.assertIn("reject", self.row(device=True)["actions"])
+        self.controls.execute(FIRST, "reject", self.row()["control_token"])
+        self.assertEqual(("request-1", {"decision": "cancel"}), self.rpc.replies[-1])
+
+    def test_turn_completion_preserves_newer_turn(self):
+        self.controls._message({"method": "turn/started", "params": {"threadId": FIRST, "turn": {"id": "new"}}})
+        token = self.row()["control_token"]
+        self.controls._message({"method": "turn/completed", "params": {"threadId": FIRST, "turn": {"id": "old"}}})
+        self.assertEqual(token, self.row()["control_token"])
+
+    def test_resync_does_not_change_idle_token_or_change_hook_states(self):
+        before = self.row(SECOND)["control_token"]
+        self.controls.sync(self.rows, force=True)
+        self.assertEqual(before, self.row(SECOND)["control_token"])
+        row = {"session_id": SECOND, "state": "waiting", "event": "abcd1234"}
+        self.controls.decorate([row])
+        self.assertEqual(("waiting", "abcd1234"), (row["state"], row["event"]))
+
+    def test_no_auto_retry_when_decision_unconfirmed(self):
+        self.controls._message(approval())
+        self.rpc.respond = lambda *args: self.rpc.replies.append(args)
+        with patch("agent_deck.controls.time.monotonic", side_effect=[0, 9]):
+            with self.assertRaisesRegex(RuntimeError, "not confirmed"):
+                self.controls.execute(FIRST, "approve", self.row()["control_token"])
+        self.assertEqual(1, len(self.rpc.replies))
+
+    def test_unloaded_thread_never_resumed_and_idle_history_not_loaded(self):
+        self.rpc.statuses.pop(SECOND)
+        self.rpc.calls.clear()
+        self.controls.sync(self.rows, force=True)
+        self.assertNotIn(SECOND, self.controls.contexts)
+        self.assertFalse(any(m == "thread/resume" for m, _ in self.rpc.calls))
+        self.assertEqual([], self.row(SECOND)["actions"])
+
+    def test_idle_threads_are_unsubscribed_and_independent_owner_is_not_controlled(self):
+        self.assertIn(FIRST, self.controls.subscribed)
+        self.rpc.statuses[FIRST] = "idle"
+        self.controls.sync(self.rows, force=True)
+        self.assertNotIn(FIRST, self.controls.subscribed)
+        self.assertIn(("thread/unsubscribe", {"threadId": FIRST}), self.rpc.calls)
+        self.controls.sync([{"session_id": FIRST, "owner_kind": "session"}], force=True)
+        self.assertEqual([], self.row()["actions"])
+
+
+if __name__ == "__main__":
+    unittest.main()

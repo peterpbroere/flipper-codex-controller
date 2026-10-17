@@ -1,0 +1,12 @@
+.venv/
+.tools/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.agent-deck/
+flipper/dist/
+flipper/.vscode/
+flipper/compile_commands.json
+agent-deck.local.json
+.device-backups/

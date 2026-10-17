@@ -1,0 +1,12 @@
+App(
+    appid="agent_deck",
+    name="Agent Deck",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="agent_deck_app",
+    requires=["gui", "notification", "storage"],
+    stack_size=4096,
+    fap_version="0.1",
+    fap_category="Tools",
+    fap_description="USB notifications for AI coding agents",
+    fap_author="Flipper Agent Deck contributors",
+)
