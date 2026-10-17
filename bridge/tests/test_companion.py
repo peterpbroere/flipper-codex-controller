@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -104,6 +105,17 @@ class RuntimeTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     self.manager.process(self.record)
             process.terminate.assert_not_called()
+
+    @unittest.skipIf(os.name == "nt", "POSIX Python interpreter symlink")
+    def test_interpreter_symlink_matches_the_actual_executable(self):
+        alias = Path(self.folder.name) / "python-alias"
+        alias.symlink_to(sys.executable)
+        self.manager = BridgeManager(Path(self.folder.name) / "runtime", interpreter=alias)
+        self.record["executable"] = str(alias)
+        process = self.fake_process()
+        process.exe.return_value = str(Path(sys.executable).resolve())
+        with patch("agent_deck.runtime.psutil.Process", return_value=process):
+            self.assertIs(process, self.manager.process(self.record))
 
     def test_only_current_fresh_heartbeat_can_report_connected(self):
         write_json(self.manager.record_path, self.record)

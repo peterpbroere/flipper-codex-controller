@@ -24,6 +24,8 @@ class Context:
     requests: dict = field(default_factory=dict)
     items: dict = field(default_factory=dict)
     busy: bool = False
+    hook_event: str = "-"
+    refresh_attachment: bool = False
 
 
 def review_request(message, items):
@@ -110,7 +112,14 @@ class Controls:
                     context.turn, context.status = turn, "active"
                     context.requests.clear()
                     context.items.clear()
+                    context.refresh_attachment = True
                     self._changed(context)
+            elif method == "thread/closed":
+                context.status, context.turn = "notLoaded", ""
+                context.requests.clear()
+                context.refresh_attachment = True
+                self.subscribed.discard(thread)
+                self._changed(context)
             elif method == "turn/completed":
                 # A delayed completion for an old turn must not clear a new one.
                 if params.get("turn", {}).get("id") == context.turn:
@@ -138,21 +147,52 @@ class Controls:
                     if removed:
                         self._changed(context)
 
+    def _recover_file_reviews(self, thread):
+        with self.lock:
+            context = self.contexts.get(thread)
+            missing = [(key, request["message"]) for key, request in context.requests.items()
+                       if request["message"]["method"] == "item/fileChange/requestApproval"
+                       and not context.items.get(request["message"]["params"]["itemId"], {}).get("changes")]
+        for key, message in missing:
+            params = message["params"]
+            try:
+                result = self.rpc.request("thread/items/read", {"threadId": thread,
+                    "turnId": params["turnId"], "itemIds": [params["itemId"]]})
+            except RuntimeError as error:
+                log.debug("File approval details not available yet: %s", error)
+                continue
+            with self.lock:
+                if key not in context.requests or context.requests[key].get("sent"):
+                    continue
+                for entry in result.get("data", []):
+                    item = entry.get("item", {})
+                    if entry.get("turnId") == params["turnId"] and item.get("id") == params["itemId"] and item.get("type") == "fileChange":
+                        context.items[item["id"]] = item
+                        context.requests[key] = review_request(message, context.items)
+                        self._changed(context)
+
     def sync(self, rows, force=False):
         wanted = set()
+        approval_events = {}
         for row in rows:
             if row.get("owner_kind") == "session":
                 continue
             try:
                 uuid.UUID(row["session_id"])
                 wanted.add(row["session_id"])
+                if row.get("state") == "waiting" and row.get("event", "-") != "-" and any(
+                        p.get("kind") == "PermissionRequest" for p in row.get("pending", {}).values()):
+                    approval_events[row["session_id"]] = row["event"]
             except (ValueError, KeyError):
                 pass
         if not wanted:
             if self.contexts:
                 self.close()
             return
-        if not force and time.monotonic() < self.next_poll:
+        with self.lock:
+            urgent = any(thread in self.contexts and self.contexts[thread].hook_event != token
+                         for thread, token in approval_events.items())
+        if not force and not urgent and time.monotonic() < self.next_poll:
             return
         self.next_poll = time.monotonic() + 2
         try:
@@ -183,10 +223,17 @@ class Controls:
                     if new:
                         self.contexts[thread] = Context()
                     revision = self.contexts[thread].revision
+                    context = self.contexts[thread]
+                    approval = approval_events.get(thread, "-")
+                    refresh = context.refresh_attachment or (approval != "-" and approval != context.hook_event)
+                    context.hook_event = approval
+                    context.refresh_attachment = False
                 params = {"threadId": thread}
                 result = self.rpc.request("thread/read", params)
                 status = result["thread"].get("status", {}).get("type", "unknown")
-                if status == "active" and thread not in self.subscribed:
+                if status == "active" and (thread not in self.subscribed or refresh):
+                    if refresh:
+                        log.info("Refreshing Codex approval attachment for %s", thread)
                     result = self.rpc.request("thread/resume", {"threadId": thread, "excludeTurns": True})
                     self.subscribed.add(thread)
                     status = result["thread"].get("status", {}).get("type", "unknown")
@@ -207,6 +254,7 @@ class Controls:
                         if status != "active":
                             context.requests.clear()
                         self._changed(context)
+                self._recover_file_reviews(thread)
             self.error = ""
         except Exception as error:
             self.error = str(error) or type(error).__name__
@@ -240,6 +288,11 @@ class Controls:
         with self.lock:
             for row in rows:
                 row.update(self._view(row["session_id"], device))
+                if row.get("state") == "waiting" and not row["review"] and any(
+                        p.get("kind") == "PermissionRequest" for p in row.get("pending", {}).values()):
+                    row["control_hint"] = "Waiting for Codex approval details; use Open on PC if needed."
+                    if device:
+                        row["detail"] = "Getting approval details. Open on PC if needed."
                 if row.get("tab") or (self.connected and row["session_id"] in self.contexts):
                     row["actions"].insert(0, "focus")
         return rows

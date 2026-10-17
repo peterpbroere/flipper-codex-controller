@@ -152,6 +152,50 @@ class ControlTests(unittest.TestCase):
                 self.controls.execute(FIRST, "approve", self.row()["control_token"])
         self.assertEqual(1, len(self.rpc.replies))
 
+    def test_new_approval_hook_refreshes_existing_attachment_once_and_bypasses_poll_delay(self):
+        original = self.rpc.request
+        def request(method, params):
+            result = original(method, params)
+            if method == "thread/resume":
+                self.rpc.callback(approval())
+            return result
+        self.rpc.request = request
+        self.rpc.calls.clear()
+        rows = [{"session_id": FIRST, "state": "waiting", "event": "1234abcd",
+                 "pending": {"patch": {"kind": "PermissionRequest"}}}]
+        self.controls.next_poll = float("inf")
+        self.controls.sync(rows)
+        self.assertIn("approve", self.row(device=True)["actions"])
+        resumes = [p for m, p in self.rpc.calls if m == "thread/resume"]
+        self.assertEqual([{"threadId": FIRST, "excludeTurns": True}], resumes)
+        self.controls.sync(rows, force=True)
+        self.assertEqual(1, sum(m == "thread/resume" for m, _ in self.rpc.calls))
+
+    def test_replayed_file_approval_recovers_full_item_before_allowing_approval(self):
+        message = {"method": "item/fileChange/requestApproval", "id": "patch",
+                   "params": {"threadId": FIRST, "turnId": "turn-" + FIRST, "itemId": "change"}}
+        self.controls._message(message)
+        self.assertNotIn("approve", self.row()["actions"])
+        original = self.rpc.request
+        def request(method, params):
+            if method == "thread/items/read":
+                self.assertEqual({"threadId": FIRST, "turnId": "turn-" + FIRST, "itemIds": ["change"]}, params)
+                return {"data": [{"turnId": "turn-" + FIRST, "item": {
+                    "type": "fileChange", "id": "change", "changes": [
+                        {"path": "C:/test.txt", "kind": {"type": "add"}, "diff": "+test"}]}}]}
+            return original(method, params)
+        self.rpc.request = request
+        self.controls.sync(self.rows, force=True)
+        self.assertIn("approve", self.row(device=True)["actions"])
+        self.assertIn("+test", self.row()["review"])
+
+    def test_closed_subscription_is_refreshed_without_removing_the_agent(self):
+        self.controls._message({"method": "thread/closed", "params": {"threadId": FIRST}})
+        self.assertNotIn(FIRST, self.controls.subscribed)
+        self.controls.sync(self.rows, force=True)
+        self.assertIn(FIRST, self.controls.subscribed)
+        self.assertIn("stop", self.row()["actions"])
+
     def test_unloaded_thread_never_resumed_and_idle_history_not_loaded(self):
         self.rpc.statuses.pop(SECOND)
         self.rpc.calls.clear()

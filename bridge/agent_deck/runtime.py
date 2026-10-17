@@ -98,9 +98,10 @@ class BridgeManager:
             started = record_time(record)
             if abs(process.create_time() - started) >= 0.01:
                 return None  # The old process exited; its PID was reused.
-            if os.path.normcase(process.exe()) != os.path.normcase(str(self.interpreter)):
+            expected_executable = os.path.normcase(os.path.realpath(self.interpreter))
+            if os.path.normcase(os.path.realpath(process.exe())) != expected_executable:
                 raise RuntimeError("Recorded bridge executable does not match; no process was changed")
-            if os.path.normcase(str(record["executable"])) != os.path.normcase(str(self.interpreter)):
+            if os.path.normcase(os.path.realpath(record["executable"])) != expected_executable:
                 raise RuntimeError("Recorded bridge interpreter does not match; no process was changed")
             args = process.cmdline()
             if not any(args[i:i + 2] == ["-m", "agent_deck"] for i in range(len(args) - 1)) or not any(

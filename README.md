@@ -323,6 +323,11 @@ its capabilities and send actions through a local SQLite mailbox, so both
 surfaces refer to the same pending requests. Mailbox commands are claimed once,
 expire after five seconds if not started, and cannot cross bridge restarts.
 Closing the PC window leaves Flipper controls running.
+New approval notifications refresh the live attachment, including after a new
+turn or an additional CLI view opens. Replayed file approvals recover their exact
+file-change item before enabling Approve. If Codex has not supplied those details
+yet, the Flipper states that it is waiting for approval details; it does not
+guess an approval from the notification summary.
 
 Actions carry a token for the current control state. A newer turn, answered
 request, changed pending request, or connection restart invalidates old controls.
