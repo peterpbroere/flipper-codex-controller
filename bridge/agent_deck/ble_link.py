@@ -94,7 +94,7 @@ class BluetoothLink:
                 log.info("Connected to Agent Deck via Bluetooth on %s", self.address)
                 return self.connected
             except Exception as error:
-                self.error = (str(error) or type(error).__name__) + ". Pair Deck <name> in Windows Settings if needed."
+                self.error = (str(error) or type(error).__name__) + ". Pair Deck <name> in Bluetooth settings if needed."
                 log.warning("Bluetooth connection: %s", self.error)
                 self.next_attempt = time.monotonic() + 3
         if time.monotonic() >= self.next_attempt:

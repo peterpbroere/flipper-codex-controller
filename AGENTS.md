@@ -54,6 +54,9 @@ These instructions apply to this entire repository.
   explicit, preserve and back up the user's hook configuration, and offer to
   remove only Agent Deck entries during uninstall. Do not add login autostart.
   Keep the Flipper `.fap` as a separate device install artifact.
+- Also provide an x86-64 Linux package as an experimental Ubuntu 22.04-built
+  tarball. Clearly state that the packaged app and real-device Linux behavior
+  have not yet been verified on a Linux installation.
 
 ## Verification and delivery
 

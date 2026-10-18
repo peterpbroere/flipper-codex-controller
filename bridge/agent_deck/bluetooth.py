@@ -213,7 +213,7 @@ def main(args):
         print(json.dumps(result, indent=2))
     except BleakError as error:
         raise RuntimeError(
-            f"Bluetooth: {error}. On Windows, pair the Deck device in Settings first, "
+            f"Bluetooth: {error}. Pair the Deck device in your desktop Bluetooth settings first, "
             "using the PIN displayed on the Flipper; then retry.") from error
     except asyncio.TimeoutError as error:
         raise RuntimeError("Bluetooth timed out waiting for the Flipper; reopen the test app and retry.") from error

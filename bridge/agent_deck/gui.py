@@ -1,5 +1,6 @@
 """Small Tk companion; USB and SQLite work stay outside the UI thread."""
 from concurrent.futures import ThreadPoolExecutor
+import os
 import queue
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -372,7 +373,10 @@ class CompanionWindow:
         port = tk.StringVar(dialog, value=self.connection_saved["port"])
         self.bluetooth_selection = tk.StringVar(dialog, value=self.connection_saved["address"])
         self.bluetooth_choices = {}
-        self.bluetooth_scan_status = tk.StringVar(dialog, value="Pair Deck <name> in Windows Bluetooth Settings using its displayed PIN.")
+        pairing_hint = ("Pair Deck <name> in Windows Bluetooth Settings using its displayed PIN."
+                        if os.name == "nt" else
+                        "Pair Deck <name> in your Linux Bluetooth settings using its displayed PIN.")
+        self.bluetooth_scan_status = tk.StringVar(dialog, value=pairing_hint)
         ttk.Label(body, text="Connection", style="Section.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 16))
         ttk.Label(body, text="Connect using").grid(row=1, column=0, sticky="w", padx=(0, 12))
         picker = ttk.Combobox(body, textvariable=mode, values=["USB", "Bluetooth"], state="readonly")

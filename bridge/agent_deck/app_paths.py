@@ -1,4 +1,4 @@
-"""Paths that remain stable in source checkouts and packaged Windows builds."""
+"""Paths that remain stable in source checkouts and packaged builds."""
 from __future__ import annotations
 
 import os
@@ -36,9 +36,10 @@ def bridge_executable():
     """Return the console executable used for bridge child and hook processes."""
     executable = Path(sys.executable).resolve()
     if is_frozen():
-        # The GUI entry point is windowed; use its console sibling for the bridge
-        # and Codex hooks so stdin/stdout and diagnostics remain available.
-        candidate = executable.with_name("AgentDeck.exe")
+        # The GUI entry point may be windowed; use its console sibling for the
+        # bridge and Codex hooks so stdin/stdout and diagnostics remain available.
+        console_name = "AgentDeck.exe" if os.name == "nt" else "AgentDeck"
+        candidate = executable.with_name(console_name)
         if candidate.is_file():
             return candidate
     return executable

@@ -63,8 +63,9 @@ Actual device screenshots, enlarged without smoothing:
   `codex app-server proxy` (developed against **0.163.0**). The local protocol is
   experimental and may change between versions.
 
-The Python code is written to be portable, and CI is configured for Windows and
-Linux tests. Real-device testing so far has been on Windows.
+The Python code is written to be portable, and CI runs tests on Windows and
+Linux. Real-device testing so far has been on Windows. Linux release packages
+are experimental and have not yet been verified on a Linux installation.
 
 ## Install a packaged Windows build
 
@@ -95,6 +96,30 @@ Python environment to remove its old hook entries before registering the
 packaged executable. During uninstall, Agent Deck offers to remove its own hook
 entries and backs up the Codex hook file before changing it. Choosing No leaves
 Codex configuration untouched.
+
+## Try the experimental Linux package
+
+Each version tag also builds an x86-64 Linux `tar.gz` for Ubuntu 22.04. This
+package is **experimental**: CI builds and tests the Python code on Linux, but
+the packaged application has not yet been verified on a Linux installation or
+with a real Flipper connected to Linux. It bundles Python, Tkinter, BLE, and the
+CLI; it does not install system services or register Codex hooks automatically.
+The archive is built on Ubuntu 22.04 and may not run on older distributions.
+
+Extract the archive and launch the companion:
+
+```sh
+tar -xzf AgentDeck-Linux-x86_64-EXPERIMENTAL-*.tar.gz
+cd AgentDeck
+./AgentDeckCompanion
+```
+
+To preview and then register Codex hooks, run `./AgentDeck install-hooks` and
+`./AgentDeck install-hooks --apply` from the extracted directory, then review
+and trust the new definitions in Codex with `/hooks`. To use USB, your Linux
+user may need permission to access the Flipper's serial device. Bluetooth setup
+uses the Linux desktop's Bluetooth tools and has not been verified. **Open on
+PC**, which opens or focuses a Codex terminal, remains Windows-only.
 
 ## Install from this checkout
 

@@ -7,7 +7,7 @@ hiddenimports = collect_submodules("bleak") + collect_submodules("winrt")
 datas = [(str(root / "scripts" / "Focus-Agent.ps1"), "scripts")]
 
 a = Analysis(
-    [str(root / "packaging" / "windows" / "entrypoint.py")],
+    [str(root / "packaging" / "entrypoint.py")],
     pathex=[str(root / "bridge")],
     binaries=[],
     datas=datas,

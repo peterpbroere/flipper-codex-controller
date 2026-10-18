@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flipper-agent-deck"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Flipper Zero dashboard and USB/Bluetooth controller for coding agents"
 requires-python = ">=3.9"
 dependencies = ["pyserial>=3.5,<4", "psutil>=5.9,<8", "websocket-client>=1.8,<2"]
