@@ -9,6 +9,7 @@ import time
 import uuid
 
 from .codex_rpc import CodexRPC
+from .protocol import display_text
 
 log = logging.getLogger(__name__)
 ACTION_BITS = {"focus": 1, "stop": 2, "continue": 4, "approve": 8, "reject": 16}
@@ -56,14 +57,17 @@ def review_request(message, items):
     can_reject = bool(reject_decision)
     if reject_decision == "cancel":
         text += "\nReject cancels this turn."
-    wire = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " | ")
-    device_accept = can_accept and all(32 <= ord(c) <= 126 for c in wire)
+    wire = display_text(text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " | "), 513)
     if len(wire) > 512:
         marker = "Preview truncated | "
         wire = marker + wire[:512 - len(marker)]
-    return {"message": message, "review": text[:16384], "approve": can_accept and len(text) <= 16384,
-            "reject": can_reject, "reject_decision": reject_decision, "device_approve": device_accept,
-            "device_review": wire if device_accept else (
+    review = text
+    if len(review) > 16384:
+        marker = "Preview truncated\n\n"
+        review = marker + review[:16384 - len(marker)]
+    return {"message": message, "review": review, "approve": can_accept,
+            "reject": can_reject, "reject_decision": reject_decision, "device_approve": can_accept,
+            "device_review": wire if can_accept else (
                 "Full request requires PC review. Reject cancels this turn." if reject_decision == "cancel" else
                 "Full request requires PC review. Reject is still available.")}
 

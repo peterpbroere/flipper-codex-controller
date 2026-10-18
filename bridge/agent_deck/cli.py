@@ -7,7 +7,7 @@ import secrets
 import time
 import sqlite3
 
-from .install import install_hooks
+from .install import install_hooks, uninstall_hooks
 from .model import Deck
 from .names import rename_session
 from .service import drain, remove_dead, run
@@ -60,6 +60,10 @@ def main():
     cmd = sub.add_parser("install-hooks", help="Preview or install Codex hook configuration")
     cmd.add_argument("--config", help="Hook configuration path; defaults to ~/.codex/hooks.json")
     cmd.add_argument("--apply", action="store_true", help="Back up existing configuration and save the merge")
+    cmd = sub.add_parser("uninstall-hooks", help="Preview or remove Agent Deck entries from Codex hook configuration")
+    cmd.add_argument("--config", help="Hook configuration path; defaults to ~/.codex/hooks.json")
+    cmd.add_argument("--apply", action="store_true", help="Back up existing configuration and remove Agent Deck entries")
+    sub.add_parser("hook", help=argparse.SUPPRESS)
     cmd = sub.add_parser("notify-test", help="Emit a temporary test notification; executes no agent command")
     cmd.add_argument("--store")
     cmd.add_argument("--seconds", type=float, default=10)
@@ -99,6 +103,11 @@ def main():
             bluetooth_main(args)
         elif args.command == "install-hooks":
             install_hooks(args.config, args.apply)
+        elif args.command == "uninstall-hooks":
+            uninstall_hooks(args.config, args.apply)
+        elif args.command == "hook":
+            from .hook import main as hook_main
+            hook_main()
         elif args.command in {"status", "list", "rename"}:
             store = EventStore(args.store)
             try:

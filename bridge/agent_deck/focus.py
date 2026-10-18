@@ -9,10 +9,12 @@ import subprocess
 import shutil
 import uuid
 
+from .app_paths import SOURCE_ROOT, is_frozen, resource_root
+
 
 class FocusRunner:
     def __init__(self, script=None):
-        default = Path(__file__).resolve().parents[2] / "scripts/Focus-Agent.ps1"
+        default = (resource_root() if is_frozen() else SOURCE_ROOT) / "scripts/Focus-Agent.ps1"
         self.script = Path(script) if script else default
         self.enabled = os.name == "nt" and self.script.is_file()
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-deck-focus")

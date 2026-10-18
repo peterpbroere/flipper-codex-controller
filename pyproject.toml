@@ -11,6 +11,7 @@ dependencies = ["pyserial>=3.5,<4", "psutil>=5.9,<8", "websocket-client>=1.8,<2"
 
 [project.optional-dependencies]
 bluetooth = ["bleak>=1.1.1,<2"]
+packaging = ["pyinstaller==6.22.3"]
 
 [project.scripts]
 agent-deck = "agent_deck.cli:main"

@@ -66,6 +66,36 @@ Actual device screenshots, enlarged without smoothing:
 The Python code is written to be portable, and CI is configured for Windows and
 Linux tests. Real-device testing so far has been on Windows.
 
+## Install a packaged Windows build
+
+Pushing a tag that matches the project version builds a per-user installer and
+creates a draft under GitHub **Releases**. A maintainer can review and publish
+that draft. The installer bundles the Python runtime, Tkinter companion, USB
+and Bluetooth bridge, and command-line tools; Python does not need to be
+installed separately. The Flipper `.fap` is a separate download and must still
+be installed on the device.
+
+The installer adds a Start menu shortcut but does not start Agent Deck at login
+or register Codex hooks automatically. To preview and then register the
+observational hooks, run these commands in PowerShell (adjust the install path
+if you changed it in setup):
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Agent Deck\AgentDeck.exe" install-hooks
+& "$env:LOCALAPPDATA\Programs\Agent Deck\AgentDeck.exe" install-hooks --apply
+```
+
+The hook installer backs up and merges `~/.codex/hooks.json`. Then review and
+trust the new definitions in Codex with `/hooks`. Connection settings, bridge
+status, logs, and the session journal are stored under
+`%LOCALAPPDATA%\FlipperAgentDeck`.
+
+When moving from a source checkout, stop its bridge and use that checkout's
+Python environment to remove its old hook entries before registering the
+packaged executable. During uninstall, Agent Deck offers to remove its own hook
+entries and backs up the Codex hook file before changing it. Choosing No leaves
+Codex configuration untouched.
+
 ## Install from this checkout
 
 In PowerShell at the repository root:
@@ -385,8 +415,10 @@ not resent automatically; inspect the session on PC.
 The Flipper shows a scrollable approval preview of up to 512 printable ASCII
 characters. Longer previews begin with **Preview truncated** and keep **Approve
 once** available for the exact original pending request. Truncation only affects
-the displayed text. Non-ASCII requests still require PC review; Reject can remain
-available. The companion supports previews up to 16 KiB. Missing command
+the displayed text. Non-ASCII text uses the same transliteration/replacement as
+other Flipper text and does not disable approval. The companion keeps Unicode
+text, displays up to 16 KiB, and marks longer previews as **Preview truncated**
+without disabling approval. Missing command
 or file-change details, stdin approvals, and session write grants also require
 review in Codex. The UI only offers decisions the request allows. Other request
 types, including structured questions and tool-specific permission grants, stay
@@ -400,7 +432,7 @@ daemon is configured. The client connects through the existing local control
 socket using `codex app-server proxy` and the documented
 [app-server methods](https://learn.chatgpt.com/docs/app-server).
 
-When upgrading, run `python -m pip install -e .` in the virtual environment,
+When upgrading a source checkout, run `python -m pip install -e .` in the virtual environment,
 install the new Flipper app, restart the bridge, and reopen the companion window.
 
 ### Optional independent CLI for prompt exit cleanup

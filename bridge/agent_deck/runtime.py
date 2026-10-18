@@ -14,8 +14,10 @@ import time
 
 import psutil
 
+from .app_paths import SOURCE_ROOT, app_root, bridge_executable, is_frozen, state_dir as default_state_dir
 
-ROOT = Path(__file__).resolve().parents[2]
+
+ROOT = SOURCE_ROOT
 
 
 def connection_settings(transport="usb", port="auto", address=""):
@@ -69,8 +71,8 @@ def tail(path, limit=16000):
 
 class BridgeManager:
     def __init__(self, state_dir=None, interpreter=None):
-        self.state_dir = Path(state_dir) if state_dir else ROOT / ".agent-deck"
-        self.interpreter = Path(interpreter or sys.executable)
+        self.state_dir = Path(state_dir) if state_dir else default_state_dir()
+        self.interpreter = Path(interpreter or bridge_executable())
         if self.interpreter.name.lower() == "pythonw.exe":
             self.interpreter = self.interpreter.with_name("python.exe")
         self.record_path = self.state_dir / "bridge-process.json"
@@ -120,8 +122,8 @@ class BridgeManager:
             if os.path.normcase(os.path.realpath(record["executable"])) != expected_executable:
                 raise RuntimeError("Recorded bridge interpreter does not match; no process was changed")
             args = process.cmdline()
-            if not any(args[i:i + 2] == ["-m", "agent_deck"] for i in range(len(args) - 1)) or not any(
-                    arg in {"run", "demo"} for arg in args):
+            module_entry = any(args[i:i + 2] == ["-m", "agent_deck"] for i in range(len(args) - 1))
+            if (not module_entry and not is_frozen()) or not any(arg in {"run", "demo"} for arg in args):
                 raise RuntimeError("Recorded process is not an Agent Deck bridge; no process was changed")
             return process if process.is_running() else None
         except (psutil.NoSuchProcess, psutil.ZombieProcess):
@@ -167,14 +169,17 @@ class BridgeManager:
             settings = connection_settings(transport or settings["transport"],
                 port if port is not None else settings["port"],
                 address if address is not None else settings["address"])
-            args = [str(self.interpreter), "-m", "agent_deck", "demo" if demo else "run", "--port", settings["port"],
-                    "--status-file", str(self.status_path.resolve()), "--instance", instance]
+            args = [str(self.interpreter)]
+            if not is_frozen():
+                args.extend(["-m", "agent_deck"])
+            args.extend(["demo" if demo else "run", "--port", settings["port"],
+                         "--status-file", str(self.status_path.resolve()), "--instance", instance])
             args.extend(["--transport", settings["transport"], "--address", settings["address"]])
             if store_path:
                 args.extend(["--store", str(Path(store_path).resolve())])
             self.status_path.unlink(missing_ok=True)
             with (self.state_dir / "bridge.stdout.log").open("w", encoding="utf-8") as output, self.log_path.open("w", encoding="utf-8") as errors:
-                child = subprocess.Popen(args, cwd=ROOT, stdout=output, stderr=errors,
+                child = subprocess.Popen(args, cwd=app_root(), stdout=output, stderr=errors,
                                          creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             try:
                 created = psutil.Process(child.pid).create_time()

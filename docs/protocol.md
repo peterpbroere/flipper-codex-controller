@@ -63,6 +63,10 @@ pending request and sends the decision for its exact request ID; shortening the
 display never shortens or changes the approved command or patch. Metadata and
 control capabilities commit atomically at END.
 
+Non-ASCII review text uses the normal device display conversion: transliteration
+where possible and `?` for unsupported characters. This conversion does not
+disable approval or modify the original pending request.
+
 AD3 adds session controls. Update the companion and Flipper app together;
 AD1, AD2, and AD3 do not handshake. The normal CLI serial interface remains available
 for installing the matching app.

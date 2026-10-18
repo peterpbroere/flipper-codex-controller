@@ -137,18 +137,64 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(512, len(request["device_review"]))
         self.assertTrue(request["device_review"].startswith("Preview truncated | File changes:"))
 
-    def test_non_ascii_request_requires_pc_review(self):
-        for command in ("echo å",):
-            self.controls._message(approval(command=command))
-            self.assertIn("approve", self.row()["actions"])
-            self.assertNotIn("approve", self.row(device=True)["actions"])
-            self.assertIn("reject", self.row(device=True)["actions"])
-            self.controls.contexts[FIRST].requests.clear()
+    def test_non_ascii_preview_keeps_approval_and_the_exact_original_request(self):
+        for device in (False, True):
+            message = approval(command='echo åäö “hello” 🙂', cwd='C:/räksmörgås', reason='Behöver godkännande')
+            original = copy.deepcopy(message)
+            self.controls._message(message)
+            row = self.row(device=device)
+            self.assertIn("approve", row["actions"])
+            self.assertIn("reject", row["actions"])
+            if device:
+                self.assertIn("echo aao ?hello? ?", row["review"])
+                self.assertIn("C:/raksmorgas", row["review"])
+                self.assertTrue(all(32 <= ord(c) <= 126 for c in row["review"]))
+            else:
+                self.assertIn(message["params"]["command"], row["review"])
+            self.controls.execute(FIRST, "approve", row["control_token"], device=device)
+            self.assertEqual((message["id"], {"decision": "accept"}), self.rpc.replies[-1])
+            self.assertEqual(original, message)
+
+    def test_long_desktop_preview_keeps_approval_for_the_original_request(self):
+        message = approval(command="echo " + "å" * 20000)
+        original = copy.deepcopy(message)
+        self.controls._message(message)
+        row = self.row()
+        self.assertIn("approve", row["actions"])
+        self.assertEqual(16384, len(row["review"]))
+        self.assertTrue(row["review"].startswith("Preview truncated\n\nCommand:\necho "))
+        self.controls.execute(FIRST, "approve", row["control_token"])
+        self.assertEqual((message["id"], {"decision": "accept"}), self.rpc.replies[-1])
+        self.assertEqual(original, message)
+
+    def test_desktop_preview_boundary_does_not_change_approval_capability(self):
+        overhead = len(review_request(approval(command="x"), {})["review"]) - 1
+        for size in (16384, 16385):
+            request = review_request(approval(command="x" * (size - overhead)), {})
+            self.assertTrue(request["approve"])
+            self.assertEqual(16384, len(request["review"]))
+            self.assertEqual(size > 16384, request["review"].startswith("Preview truncated\n\n"))
+
+    def test_non_ascii_file_change_preview_keeps_approval_on_both_surfaces(self):
+        message = {"method": "item/fileChange/requestApproval", "id": "unicode-patch",
+                   "params": {"itemId": "patch-item"}}
+        item = {"changes": [{"path": "räksmörgås.py", "diff": "ö" * 20000}]}
+        request = review_request(message, {"patch-item": item})
+        self.assertTrue(request["approve"])
+        self.assertTrue(request["device_approve"])
+        self.assertEqual(16384, len(request["review"]))
+        self.assertEqual(512, len(request["device_review"]))
+        self.assertTrue(request["review"].startswith("Preview truncated\n\n"))
+        self.assertTrue(request["device_review"].startswith("Preview truncated | "))
+        self.assertIn("raksmorgas.py", request["device_review"])
 
     def test_no_hidden_scope_and_respect_available_decisions(self):
         review = review_request(approval(availableDecisions=["decline"]), {})
         self.assertFalse(review["approve"])
         self.assertTrue(review["reject"])
+        review = review_request(approval(command="å" * 20000, availableDecisions=["decline"]), {})
+        self.assertFalse(review["approve"])
+        self.assertFalse(review["device_approve"])
         review = review_request(approval(kind="stdin"), {})
         self.assertFalse(review["approve"])
         review = review_request(approval(command=None), {})
