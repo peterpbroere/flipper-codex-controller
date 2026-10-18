@@ -14,7 +14,7 @@ from .model import Deck, demo_deck
 from .processes import classify_owner, is_alive
 from .protocol import parse_action, snapshot
 from .store import EventStore
-from .runtime import StatusWriter
+from .runtime import StatusWriter, read_json
 from .transport import SerialLink
 
 log = logging.getLogger(__name__)
@@ -42,11 +42,16 @@ def remove_dead(deck):
         # Preserve its reported state until a hook or confirmed exit changes it.
 
 
-def run(port="auto", store_path=None, demo=False, duration=None, focus_script=None, status_file=None, instance=""):
+def run(port="auto", store_path=None, demo=False, duration=None, focus_script=None, status_file=None, instance="",
+        transport="usb", address=""):
     store = None if demo else EventStore(store_path)
     deck = demo_deck() if demo else Deck()
     focus = FocusRunner(focus_script)
-    link = SerialLink(port)
+    if transport == "bluetooth":
+        from .ble_link import BluetoothLink
+        link = BluetoothLink(address)
+    else:
+        link = SerialLink(port)
     cursor = 0
     next_frame = 0
     next_cleanup = 0
@@ -62,6 +67,8 @@ def run(port="auto", store_path=None, demo=False, duration=None, focus_script=No
     signature = None
     status = StatusWriter(status_file, instance)
     last_error = ""
+    stop_path = Path(status_file).parent / "bridge-stop.json" if status_file and instance else None
+    next_stop_check = 0
 
     def publish(running=True):
         nonlocal last_error
@@ -74,9 +81,9 @@ def run(port="auto", store_path=None, demo=False, duration=None, focus_script=No
                 publisher.update(views)
                 publisher.next_update = time.monotonic() + .5
             status.update(force=not running, running=running,
-                          connected=running and link.port is not None and time.monotonic() - link.last_ack <= 3,
-                          port=link.port.port if link.port is not None else "",
-                          error=last_error, mode="demo" if demo else "live",
+                          connected=running and link.connected and time.monotonic() - link.last_ack <= link.ack_timeout,
+                          port=link.name if link.connected else "", transport=transport,
+                          error=last_error or link.error, mode="demo" if demo else "live",
                           count=len(deck.agents), attention=sum(a.state == "waiting" for a in deck.agents.values()),
                           control_revision=publisher.revision if publisher else "",
                           control_connected=controls.connected, control_error=controls.error)
@@ -85,6 +92,13 @@ def run(port="auto", store_path=None, demo=False, duration=None, focus_script=No
     try:
         log.info("%s mode. Launch Agent Deck on the Flipper; Ctrl+C stops the bridge.", "Demo" if demo else "Live")
         while time.monotonic() < deadline:
+            if stop_path and time.monotonic() >= next_stop_check:
+                next_stop_check = time.monotonic() + .2
+                try:
+                    if read_json(stop_path).get("instance") == instance:
+                        break
+                except (OSError, ValueError):
+                    pass
             if store:
                 cursor = drain(store, deck, cursor)
             if time.monotonic() >= next_cleanup:
@@ -122,7 +136,7 @@ def run(port="auto", store_path=None, demo=False, duration=None, focus_script=No
                 log.info("%d agents, %d need attention%s", len(rows), sum(r["state"] == "waiting" for r in rows),
                          f"; {deck.overflow} additional sessions exceed the device capacity" if deck.overflow else "")
                 signature = current_signature
-            was_connected = link.port is not None
+            was_connected = link.connected
             if not link.connect():
                 time.sleep(0.1)
                 continue
@@ -131,7 +145,7 @@ def run(port="auto", store_path=None, demo=False, duration=None, focus_script=No
                 next_frame = 0
                 last_error = ""
             try:
-                if time.monotonic() >= next_frame:
+                if time.monotonic() >= next_frame and not link.busy:
                     session, revision, rows = deck.wire_view()
                     if not focus.enabled:
                         for row in rows:
@@ -186,16 +200,18 @@ def run(port="auto", store_path=None, demo=False, duration=None, focus_script=No
                         log.warning("Terminal focus failed: %s", error)
                         link.send(b"RESULT\tERROR\n")
                     pending_focus = None
-                if time.monotonic() - link.last_ack > 3:
+                if time.monotonic() - link.last_ack > link.ack_timeout:
                     raise serial.SerialException("Device stopped acknowledging snapshots")
             except (serial.SerialException, OSError) as error:
-                log.warning("USB disconnected: %s", error)
+                log.warning("%s disconnected: %s", transport.upper(), error)
                 last_error = str(error)
                 link.close()
+            if transport == "bluetooth":
+                time.sleep(.02)
     except KeyboardInterrupt:
         pass
     finally:
-        link.close()
+        link.shutdown()
         publish(running=False)
         focus.close()
         control_worker.shutdown(wait=True)

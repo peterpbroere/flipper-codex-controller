@@ -34,9 +34,14 @@ class Companion:
             errors.append("Could not read activity: " + str(error))
         if health.get("error"):
             errors.append(health["error"])
+        try:
+            connection = self.manager.connection()
+        except Exception as error:
+            connection = dict(transport="usb", port="auto", address="")
+            errors.append("Could not read connection settings: " + str(error))
         rows = self.deck.view(limit=None)
         self.controls.decorate(health, rows)
-        return {"rows": rows, "health": health, "logs": logs,
+        return {"rows": rows, "health": health, "logs": logs, "connection_settings": connection,
                 "error": "\n".join(errors)}
 
     def act(self, selector, verb, token):
@@ -68,4 +73,23 @@ class Companion:
             self.manager.restart()
         else:
             raise ValueError("Unknown bridge action")
+        return self.refresh()
+
+    def scan_bluetooth(self):
+        import asyncio
+        from .bluetooth import scan
+        devices = asyncio.run(scan())
+        result = self.refresh()
+        result["bluetooth_devices"] = devices
+        return result
+
+    def connect(self, transport, port="auto", address=""):
+        from .runtime import connection_settings
+        settings = connection_settings(transport, port, address)
+        if transport == "bluetooth":
+            from .bluetooth import backend
+            backend()  # Do not stop a working bridge if the dependency is absent.
+        self.manager.stop()
+        self.manager.configure(**settings)
+        self.manager.start(store_path=self.reader.path)
         return self.refresh()

@@ -1,8 +1,12 @@
 # Flipper Agent Deck
 
-A USB dashboard and controller for AI coding agents: **Python on the PC, C on the
-Flipper Zero**. The Flipper app is a normal `.fap`; exit it to return to the
-device's other tools.
+A USB and Bluetooth LE dashboard and controller for AI coding agents: **Python
+on the PC, C on the Flipper Zero**. The Flipper app is a normal `.fap`; exit it
+to return to the device's other tools.
+
+The Flipper can connect to the companion over USB or Bluetooth LE. Both links
+carry the same live session updates and agent controls; see
+[Connection setup](#connection-setup).
 
 **Status: first working iteration.** Built and tested on Windows with official
 Flipper firmware **1.5.1, API 88.2**. The app is installed under Apps → Tools →
@@ -44,7 +48,9 @@ Actual device screenshots, enlarged without smoothing:
 
 ## Requirements
 
-- Flipper Zero with a microSD card and a **USB data cable**.
+- Flipper Zero with a microSD card. A USB data cable is needed for the USB link
+  and is useful for installing the app; BLE also needs a Bluetooth LE adapter on
+  the PC.
 - Official firmware 1.5.1 for the supplied development build.
 - Windows and Python **3.9 or newer** for the tested companion setup. Dependencies
   are `pyserial`, `psutil`, and `websocket-client`; no OpenAI API key is needed by
@@ -173,6 +179,47 @@ handshake, so port numbers do not need to be hardcoded. To inspect or select the
 COM3/COM4 are examples. qFlipper or a serial terminal may need to be closed if it
 holds the relevant port. Run one companion instance per Flipper.
 
+### Connection setup
+
+USB remains the plug-and-play option. Bluetooth LE uses the same Agent Deck app,
+bridge, control channel, and Codex connection. The first BLE setup requires a
+one-time Windows pairing; afterwards the connection is saved and reconnects when
+the bridge starts.
+
+1. Install the BLE extra in the companion environment:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m pip install -e ".[bluetooth]"
+   ```
+
+2. Open **Apps → Tools → Agent Deck** on the Flipper. In the app, open Settings,
+   move to **Connection**, and press OK to choose **BLE**. The screen confirms
+   the transport change. The app advertises as **Deck <device name>**.
+3. In Windows **Settings → Bluetooth & devices → Add device → Bluetooth**, pair
+   **Deck <device name>** and enter the PIN shown on the Flipper. Keep the normal
+   Flipper pairing intact; Agent Deck uses its own authenticated serial profile.
+4. In the companion window choose **Connection…**, select **Bluetooth LE**, use
+   **Scan** to find the paired Deck, select it, and choose **Save & connect**.
+   The companion stores the address and reconnects automatically. The same
+   selection is available to the CLI with `agent_deck run --transport bluetooth
+   --address <address>`.
+
+The Flipper and PC may show disconnected while pairing or switching transports.
+USB and BLE are mutually exclusive while the Agent Deck app is running; choose
+the matching connection in Flipper settings and the companion. Return to USB in
+the Flipper settings and select USB in **Connection…** to switch back. BLE
+requires a Bluetooth LE adapter and is currently validated on Windows. The
+Flipper phone connection is unavailable while Agent Deck's custom BLE serial
+profile is active.
+
+The separate **Agent Deck BLE Test** app is retained under `experiments/flipper_ble`
+for protocol diagnostics; it is not needed for normal use. On official firmware
+1.5.1 / API 88.2, BLE pairing, snapshot exchange, a physical button round trip,
+reconnect without re-pairing, all 16 control rows, single-press confirmation,
+exact action targets, and cancellation of stale review screens were tested.
+Maximum-sized 16-agent snapshots took about **1.1 seconds**. Range, battery use,
+sleep/wake recovery, and long-term reliability have not yet been measured.
+
 ### Try it without a working Codex notification
 
 ```powershell
@@ -193,9 +240,9 @@ Flipper; the hook and model tests below run without hardware.
 
 | Input | Overview | Details | Settings |
 | --- | --- | --- | --- |
-| Up / Down | Select and scroll | — | — |
+| Up / Down | Select and scroll | — | Select a setting |
 | Right | Next agent needing attention | — | — |
-| OK | Open details | Open controls | Toggle and save vibration |
+| OK | Open details | Open controls | Toggle and save the selected setting |
 | Back | Open settings | Return to list | Return to list |
 | Left | — | Return to list | Return to list |
 | Hold Back | Exit app | Exit app | Exit app |
@@ -335,9 +382,11 @@ The bridge rejects duplicate USB actions. Approvals are acknowledged only after
 Codex reports that the exact request was resolved. An unconfirmed decision is
 not resent automatically; inspect the session on PC.
 
-The Flipper shows a complete, scrollable approval preview of up to 512 printable
-ASCII characters. Longer or non-ASCII requests require PC review; Reject can
-remain available. The companion supports previews up to 16 KiB. Missing command
+The Flipper shows a scrollable approval preview of up to 512 printable ASCII
+characters. Longer previews begin with **Preview truncated** and keep **Approve
+once** available for the exact original pending request. Truncation only affects
+the displayed text. Non-ASCII requests still require PC review; Reject can remain
+available. The companion supports previews up to 16 KiB. Missing command
 or file-change details, stdin approvals, and session write grants also require
 review in Codex. The UI only offers decisions the request allows. Other request
 types, including structured questions and tool-specific permission grants, stay
@@ -409,8 +458,11 @@ durable/concurrent hook writes, hook merging, shared and independent owners,
 PID reuse, preservation of quiet sessions, replay/recovery, real OS process exit,
 session naming and reset/replay, bounded metadata fragments, and USB framing.
 Companion checks cover read-only journal access, safe process identity checks,
-duplicate-start prevention, real background start/stop, stale connection status,
-and window callbacks for naming, selection, unsaved edits, and error messages.
+duplicate-start prevention, real background start/stop, graceful bridge shutdown,
+stale connection status, and window callbacks for naming, selection, unsaved edits,
+connection setup, scanning, and error messages. BLE unit tests cover fragmented
+snapshots, flow-control credits, bounded queues, reconnects, and safe dispatch to
+the same validated control path used by USB.
 Hardware validation has covered the application handshake, screen rendering,
 navigation, attention jumping, muted alerts, preference persistence after app
 relaunch, and malformed/oversized frame recovery. See [the USB protocol](docs/protocol.md).
@@ -434,11 +486,16 @@ The in-conversation design prototype is retained in
 [`work/agent-deck-ui.html`](work/agent-deck-ui.html); it is a design reference, not
 the companion or the device application.
 
+The [implementation decision audit](docs/design-decisions.md) lists significant
+existing choices whose exact tradeoffs were not explicitly agreed with the user.
+It records them for review and does not treat documentation as approval.
+
 ## Later work
 
-Bluetooth, completion-specific alerts, desktop-specific conversation navigation,
-and adapters for other coding agents remain outside this first iteration. Remote
-and cloud sessions require their own supported event and control paths.
+Completion-specific alerts, desktop-specific conversation navigation, and
+adapters for other coding agents remain outside this first iteration. Remote and
+cloud sessions require their own supported event and control paths. BLE
+long-duration, range, and sleep/wake behavior still need broader testing.
 
 ## License
 

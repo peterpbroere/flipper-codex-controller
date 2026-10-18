@@ -18,6 +18,21 @@ import psutil
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def connection_settings(transport="usb", port="auto", address=""):
+    if transport not in {"usb", "bluetooth"}:
+        raise ValueError("Connection must be USB or Bluetooth")
+    port = str(port).strip() or "auto"
+    address = str(address).strip()
+    if len(port) > 256 or any(ord(c) < 32 for c in port):
+        raise ValueError("Invalid USB port")
+    if address and not (re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", address) or
+                        re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", address)):
+        raise ValueError("Choose a Bluetooth device from the scan results")
+    if transport == "bluetooth" and not address:
+        raise ValueError("Choose a paired Bluetooth Flipper first")
+    return dict(transport=transport, port=port, address=address)
+
+
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,6 +76,7 @@ class BridgeManager:
         self.record_path = self.state_dir / "bridge-process.json"
         self.status_path = self.state_dir / "bridge-status.json"
         self.log_path = self.state_dir / "bridge.stderr.log"
+        self.connection_path = self.state_dir / "connection.json"
         self._children = {}
 
     @contextmanager
@@ -133,13 +149,27 @@ class BridgeManager:
         return {**status, "running": True, "connected": connected,
                 "message": "Flipper connected" if connected else "Looking for Flipper"}
 
-    def start(self, port="auto", demo=False, store_path=None):
+    def connection(self):
+        saved = read_json(self.connection_path)
+        return connection_settings(saved.get("transport", "usb"), saved.get("port", "auto"), saved.get("address", ""))
+
+    def configure(self, transport, port="auto", address=""):
+        settings = connection_settings(transport, port, address)
+        write_json(self.connection_path, settings)
+        return settings
+
+    def start(self, port=None, demo=False, store_path=None, transport=None, address=None):
         with self.locked():
             if self.process() is not None:
                 raise RuntimeError("The bridge is already running")
             instance = secrets.token_hex(12)
-            args = [str(self.interpreter), "-m", "agent_deck", "demo" if demo else "run", "--port", port,
+            settings = self.connection()
+            settings = connection_settings(transport or settings["transport"],
+                port if port is not None else settings["port"],
+                address if address is not None else settings["address"])
+            args = [str(self.interpreter), "-m", "agent_deck", "demo" if demo else "run", "--port", settings["port"],
                     "--status-file", str(self.status_path.resolve()), "--instance", instance]
+            args.extend(["--transport", settings["transport"], "--address", settings["address"]])
             if store_path:
                 args.extend(["--store", str(Path(store_path).resolve())])
             self.status_path.unlink(missing_ok=True)
@@ -154,7 +184,7 @@ class BridgeManager:
             write_json(self.record_path, {"pid": child.pid,
                        "started": datetime.fromtimestamp(created, timezone.utc).isoformat(),
                        "executable": str(self.interpreter), "instance": instance,
-                       "port": port, "demo": demo, "store": str(Path(store_path).resolve()) if store_path else None})
+                       **settings, "demo": demo, "store": str(Path(store_path).resolve()) if store_path else None})
             return child.pid
 
     def stop(self):
@@ -162,7 +192,15 @@ class BridgeManager:
             process = self.process()
             if process is None:
                 return
-            targets = process.children(recursive=True) + [process]
+            record = read_json(self.record_path)
+            if record.get("instance"):
+                write_json(self.state_dir / "bridge-stop.json", {"instance": record["instance"]})
+                # Let BLE release its GATT session before resorting to termination.
+                psutil.wait_procs([process], timeout=4)
+            try:
+                targets = process.children(recursive=True) + [process] if process.is_running() else []
+            except psutil.NoSuchProcess:
+                targets = []
             identities = []
             for target in targets:
                 try:
@@ -195,7 +233,8 @@ class BridgeManager:
     def restart(self):
         record = read_json(self.record_path)
         self.stop()
-        return self.start(record.get("port", "auto"), record.get("demo", False), record.get("store"))
+        return self.start(record.get("port", "auto"), record.get("demo", False), record.get("store"),
+                          record.get("transport", "usb"), record.get("address", ""))
 
 
 class StatusWriter:

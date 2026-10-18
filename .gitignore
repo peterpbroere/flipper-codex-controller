@@ -8,5 +8,8 @@ __pycache__/
 flipper/dist/
 flipper/.vscode/
 flipper/compile_commands.json
+experiments/flipper_ble/dist/
+experiments/flipper_ble/.vscode/
+experiments/flipper_ble/compile_commands.json
 agent-deck.local.json
 .device-backups/

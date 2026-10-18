@@ -16,12 +16,14 @@ from .transport import flipper_ports
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Flipper Agent Deck USB companion")
+    parser = argparse.ArgumentParser(description="Flipper Agent Deck companion")
     parser.add_argument("--verbose", action="store_true", help="Log device acknowledgements for diagnostics")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("run", "demo"):
-        cmd = sub.add_parser(name, help="Run the live USB bridge" if name == "run" else "Send simulated agents to the Flipper")
+        cmd = sub.add_parser(name, help="Run the live Flipper bridge" if name == "run" else "Send simulated agents to the Flipper")
         cmd.add_argument("--port", default="auto", help="Application's second USB serial port, or auto")
+        cmd.add_argument("--transport", choices=["usb", "bluetooth"], default="usb")
+        cmd.add_argument("--address", default="", help="Paired Bluetooth address (use bluetooth scan)")
         cmd.add_argument("--duration", type=float, help="Stop after this many seconds")
         cmd.add_argument("--store", help="Event database path")
         cmd.add_argument("--focus-script", help="Optional PowerShell terminal focus helper")
@@ -31,10 +33,22 @@ def main():
     cmd.add_argument("--store")
     cmd = sub.add_parser("background", help="Manage the background bridge")
     cmd.add_argument("action", choices=["start", "stop", "restart"])
-    cmd.add_argument("--port", default="auto")
+    cmd.add_argument("--port", default=None)
+    cmd.add_argument("--transport", choices=["usb", "bluetooth"])
+    cmd.add_argument("--address", default=None)
     cmd.add_argument("--demo", action="store_true")
     cmd.add_argument("--store")
     sub.add_parser("ports", help="List connected Flipper USB ports")
+    cmd = sub.add_parser("bluetooth", help="Bluetooth diagnostic probe for the separate BLE test app")
+    bt = cmd.add_subparsers(dest="bluetooth_command", required=True)
+    cmd = bt.add_parser("scan", help="Find advertising Agent Deck BLE diagnostic devices")
+    cmd.add_argument("--timeout", type=float, default=8)
+    cmd = bt.add_parser("probe", help="Probe the separate test app with read-only snapshots and a harmless button test")
+    cmd.add_argument("--address", required=True, help="Explicit device address from bluetooth scan")
+    cmd.add_argument("--duration", type=float, default=30, help="Seconds per connection after pairing")
+    cmd.add_argument("--cycles", type=int, default=1, help="Disconnect/reconnect cycles to test")
+    cmd.add_argument("--demo", action="store_true", help="Use simulated agents instead of the event journal")
+    cmd.add_argument("--store")
     for name in ("status", "list"):
         cmd = sub.add_parser(name, help="Show tracked sessions as JSON" if name == "status" else "List session IDs and names")
         cmd.add_argument("--store")
@@ -55,7 +69,10 @@ def main():
         if args.command in {"run", "demo"}:
             if args.duration is not None and args.duration <= 0:
                 parser.error("--duration must be positive")
-            run(args.port, args.store, args.command == "demo", args.duration, args.focus_script, args.status_file, args.instance)
+            from .runtime import connection_settings
+            settings = connection_settings(args.transport, args.port, args.address)
+            run(args.port, args.store, args.command == "demo", args.duration, args.focus_script, args.status_file, args.instance,
+                settings["transport"], settings["address"])
         elif args.command == "gui":
             from .gui import launch
             launch(args.store)
@@ -66,7 +83,7 @@ def main():
                 manager.stop()
                 print("Background bridge stopped")
             else:
-                pid = manager.restart() if args.action == "restart" else manager.start(args.port, args.demo, args.store)
+                pid = manager.restart() if args.action == "restart" else manager.start(args.port, args.demo, args.store, args.transport, args.address)
                 print(f"Background bridge running (PID {pid})")
         elif args.command == "ports":
             ports = flipper_ports()
@@ -74,6 +91,12 @@ def main():
                 print(f"{port.device}: {port.description} ({port.hwid})")
             if not ports:
                 print("No Flipper USB ports found. Use a data cable and turn the device on.")
+        elif args.command == "bluetooth":
+            if (getattr(args, "duration", 1) <= 0 or getattr(args, "timeout", 1) <= 0 or
+                    getattr(args, "cycles", 1) <= 0):
+                parser.error("Bluetooth duration, timeout, and cycles must be positive")
+            from .bluetooth import main as bluetooth_main
+            bluetooth_main(args)
         elif args.command == "install-hooks":
             install_hooks(args.config, args.apply)
         elif args.command in {"status", "list", "rename"}:

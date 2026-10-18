@@ -98,6 +98,24 @@ class WindowTests(unittest.TestCase):
         self.app._toggle_logs()
         self.assertFalse(self.app.logs_visible)
 
+    def test_connection_editor_preserves_unsaved_device_during_refresh(self):
+        self.app._connection_dialog()
+        self.app.bluetooth_selection.set("80:E1:27:37:4B:48")
+        self.app._submit(self.app.controller.refresh)
+        self.pump()
+        self.assertEqual("80:E1:27:37:4B:48", self.app.bluetooth_selection.get())
+        self.app.connection_dialog.destroy()
+
+    def test_bluetooth_scan_results_identify_device_and_connection_hint(self):
+        self.app._connection_dialog()
+        data = self.app.controller.refresh()
+        data["bluetooth_devices"] = [dict(name="Deck test", address="80:E1:27:37:4B:48")]
+        data["health"].update(connected=True, transport="bluetooth", port="80:E1:27:37:4B:48")
+        self.app._render(data)
+        self.assertIn("Deck test", self.app.bluetooth_selection.get())
+        self.assertIn("Bluetooth", self.app.connection_hint.get())
+        self.app.connection_dialog.destroy()
+
     def test_agent_buttons_follow_capabilities_and_confirmation_keeps_original_target(self):
         first, second = list(self.app.rows)
         self.app.table.selection_set(first)

@@ -7,6 +7,7 @@
 #include "deck_protocol.h"
 #include "deck_settings.h"
 #include "deck_usb.h"
+#include "deck_ble.h"
 
 typedef enum {
     ScreenOverview,
@@ -24,6 +25,10 @@ typedef struct {
     Gui* gui;
     NotificationApp* notifications;
     DeckUsb* usb;
+    DeckBle* ble;
+    bool bluetooth;
+    bool switch_transport;
+    size_t settings_selected;
     DeckSnapshot current;
     DeckParser parser;
     size_t selected;
@@ -47,6 +52,10 @@ typedef struct {
     char toast[24];
     uint32_t toast_until;
 } AgentDeck;
+
+static bool send_line(AgentDeck* app, const char* line) {
+    return app->bluetooth ? deck_ble_send(app->ble, line) : deck_usb_send(app->usb, line);
+}
 
 static const char* action_names[] =
     {"Open on PC", "Stop turn", "Continue", "Approve once", "Reject request"};
@@ -117,12 +126,15 @@ static void draw(Canvas* canvas, void* context) {
     if(app->screen == ScreenSettings) {
         canvas_draw_str(canvas, 1, 8, "Settings");
         canvas_draw_line(canvas, 0, 10, 127, 10);
-        canvas_draw_box(canvas, 0, 16, 128, 13);
+        canvas_draw_box(canvas, 0, 16 + 15 * app->settings_selected, 128, 13);
         canvas_set_color(canvas, ColorWhite);
+        if(app->settings_selected != 0) canvas_set_color(canvas, ColorBlack);
         canvas_draw_str(canvas, 3, 25, "Vibration");
         canvas_draw_str(canvas, 102, 25, app->vibration ? "On" : "Off");
+        canvas_set_color(canvas, app->settings_selected == 1 ? ColorWhite : ColorBlack);
+        canvas_draw_str(canvas, 3, 40, "Connection");
+        canvas_draw_str(canvas, 90, 40, app->bluetooth ? "BLE" : "USB");
         canvas_set_color(canvas, ColorBlack);
-        canvas_draw_str(canvas, 1, 43, "Once per new alert");
         canvas_draw_line(canvas, 0, 53, 127, 53);
         canvas_draw_str(canvas, 1, 63, "OK:Toggle  Back:List");
     } else if(app->screen == ScreenActions && app->current.count) {
@@ -216,7 +228,7 @@ static void draw(Canvas* canvas, void* context) {
             (unsigned)waiting);
         canvas_draw_str(canvas, 1, 8, text);
         canvas_draw_str(canvas, 78, 8, app->vibration ? "V+" : "V-");
-        canvas_draw_str(canvas, 105, 8, app->connected ? "USB" : "OFF");
+        canvas_draw_str(canvas, 105, 8, app->connected ? (app->bluetooth ? "BLE" : "USB") : "OFF");
         canvas_draw_line(canvas, 0, 10, 127, 10);
         if(!app->current.count) {
             canvas_draw_str(
@@ -224,7 +236,8 @@ static void draw(Canvas* canvas, void* context) {
                 1,
                 27,
                 app->connected ? "No agents yet" :
-                                 (app->usb ? "Waiting for bridge" : "USB busy - restart app"));
+                                 (app->bluetooth ? (app->ble ? "Waiting for BLE bridge" : "BLE unavailable") :
+                                  (app->usb ? "Waiting for bridge" : "USB busy - restart app")));
             canvas_draw_str(canvas, 1, 42, "Back:Settings");
         }
         const char* states[] = {"IDLE", "RUN", "WAIT", "DONE", "ERR", "OFF"};
@@ -286,7 +299,8 @@ static void toast(AgentDeck* app, const char* text) {
 }
 
 static void send_action(AgentDeck* app, size_t verb) {
-    if(!app->connected || !app->current.count || app->action_pending) {
+    if(!app->connected || (app->bluetooth && !deck_ble_connected(app->ble)) ||
+       !app->current.count || app->action_pending) {
         toast(app, app->action_pending ? "Action in progress" : "Bridge disconnected");
         return;
     }
@@ -309,13 +323,13 @@ static void send_action(AgentDeck* app, size_t verb) {
         row->id,
         action_verbs[verb],
         verb ? app->target_control : row->control);
-    if(deck_usb_send(app->usb, line)) {
+    if(send_line(app, line)) {
         app->action_pending = true;
         app->action_sent = furi_get_tick();
         toast(app, "Sending...");
         app->screen = ScreenDetail;
     } else {
-        toast(app, "USB busy - try again");
+        toast(app, "Link busy - try again");
     }
 }
 
@@ -327,7 +341,14 @@ static bool input(AgentDeck* app, InputEvent event) {
     if(app->screen == ScreenSettings) {
         if(event.key == InputKeyBack || event.key == InputKeyLeft)
             app->screen = ScreenOverview;
-        else if(event.key == InputKeyOk) {
+        else if(event.key == InputKeyUp || event.key == InputKeyDown)
+            app->settings_selected = 1 - app->settings_selected;
+        else if(event.key == InputKeyOk && app->settings_selected == 1) {
+            if(deck_settings_save_bluetooth(!app->bluetooth))
+                app->switch_transport = true;
+            else
+                toast(app, "Could not save setting");
+        } else if(event.key == InputKeyOk) {
             if(deck_settings_save(!app->vibration)) {
                 app->vibration = !app->vibration;
                 toast(app, "Saved");
@@ -413,7 +434,7 @@ static bool input(AgentDeck* app, InputEvent event) {
 
 static void incoming_line(AgentDeck* app, char* line) {
     if(strcmp(line, "PING\tAD3") == 0) {
-        deck_usb_send(app->usb, "HELLO\tAD3\n");
+        send_line(app, "HELLO\tAD3\n");
         return;
     }
     if(strncmp(line, "RESULT\t", 7) == 0) {
@@ -483,7 +504,7 @@ static void incoming_line(AgentDeck* app, char* line) {
                 (unsigned long)app->alerts,
                 (unsigned long)app->buzzes,
                 app->current.count ? app->current.rows[app->selected].id : "-");
-            deck_usb_send(app->usb, ack);
+            send_line(app, ack);
         }
     } else {
         deck_parse_line(&app->parser, line, &app->current);
@@ -495,6 +516,7 @@ int32_t agent_deck_app(void* context) {
     AgentDeck* app = malloc(sizeof(AgentDeck));
     memset(app, 0, sizeof(*app));
     app->vibration = deck_settings_load();
+    app->bluetooth = deck_settings_load_bluetooth();
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->events = furi_message_queue_alloc(32, sizeof(DeckMessage));
     app->notifications = furi_record_open(RECORD_NOTIFICATION);
@@ -503,7 +525,10 @@ int32_t agent_deck_app(void* context) {
     view_port_draw_callback_set(app->viewport, draw, app);
     view_port_input_callback_set(app->viewport, input_callback, app);
     gui_add_view_port(app->gui, app->viewport, GuiLayerFullscreen);
-    app->usb = deck_usb_alloc(app->events);
+    if(app->bluetooth)
+        app->ble = deck_ble_alloc(app->events);
+    else
+        app->usb = deck_usb_alloc(app->events);
     bool running = true;
     while(running) {
         DeckMessage message;
@@ -512,21 +537,51 @@ int32_t agent_deck_app(void* context) {
         if(received) {
             if(message.type == DeckMessageInput)
                 running = input(app, message.data.input);
-            else
+            else if(message.type == DeckMessageReset) {
+                app->connected = app->action_pending = false;
+                app->parser.active = false;
+                app->current.session[0] = 0;
+                if(app->screen == ScreenConfirm) app->screen = ScreenActions;
+            } else
                 incoming_line(app, message.data.line);
         }
-        if(app->connected && furi_get_tick() - app->last_update > furi_ms_to_ticks(3000))
+        if(app->connected &&
+           furi_get_tick() - app->last_update > furi_ms_to_ticks(app->bluetooth ? 10000 : 3000))
             app->connected = false;
         if(app->action_pending && furi_get_tick() - app->action_sent > furi_ms_to_ticks(12000)) {
             app->action_pending = false;
             toast(app, "Not confirmed - check PC");
         }
         furi_mutex_release(app->mutex);
+        if(app->switch_transport) {
+            deck_usb_free(app->usb);
+            deck_ble_free(app->ble);
+            app->usb = NULL;
+            app->ble = NULL;
+            // Old queued bytes must not cross a transport boundary.
+            while(furi_message_queue_get(app->events, &message, 0) == FuriStatusOk) {
+            }
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            app->bluetooth = !app->bluetooth;
+            app->connected = app->action_pending = false;
+            app->parser.active = false;
+            app->current.session[0] = 0;
+            app->switch_transport = false;
+            furi_mutex_release(app->mutex);
+            if(app->bluetooth)
+                app->ble = deck_ble_alloc(app->events);
+            else
+                app->usb = deck_usb_alloc(app->events);
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            toast(app, (app->ble || app->usb) ? "Connection changed" : "Connection unavailable");
+            furi_mutex_release(app->mutex);
+        }
         view_port_update(app->viewport);
     }
     view_port_enabled_set(app->viewport, false);
     gui_remove_view_port(app->gui, app->viewport);
     deck_usb_free(app->usb);
+    deck_ble_free(app->ble);
     view_port_free(app->viewport);
     furi_record_close(RECORD_GUI);
     furi_record_close(RECORD_NOTIFICATION);

@@ -40,6 +40,9 @@ def flipper_ports():
 
 
 class SerialLink:
+    ack_timeout = 3
+    busy = False
+    error = ""
     def __init__(self, port="auto"):
         self.requested = port
         self.port = None
@@ -74,6 +77,14 @@ class SerialLink:
                 candidate.close()
         return False
 
+    @property
+    def connected(self):
+        return self.port is not None
+
+    @property
+    def name(self):
+        return self.port.port if self.port else ""
+
     def send(self, data):
         if self.port is None or self.port.write(data) != len(data):
             raise serial.SerialException("Incomplete USB write")
@@ -86,3 +97,6 @@ class SerialLink:
             self.port.close()
             self.port = None
         self.lines = Lines()
+
+    def shutdown(self):
+        self.close()

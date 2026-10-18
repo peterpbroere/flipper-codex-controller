@@ -1,0 +1,13 @@
+App(
+    appid="agent_deck_ble_test",
+    name="Agent Deck BLE Test",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="agent_deck_ble_test_app",
+    requires=["gui", "bt", "storage"],
+    sources=["*.c"],
+    stack_size=4096,
+    fap_version="0.1",
+    fap_category="Tools",
+    fap_description="Experimental Bluetooth dashboard and harmless button test",
+    fap_author="Flipper Agent Deck contributors",
+)

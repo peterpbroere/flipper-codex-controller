@@ -57,8 +57,11 @@ Each row requires one CTRL record. Its bit mask is focus=1, stop=2, continue=4,
 approve=8, reject=16; unknown bits, duplicate records, and missing control tokens
 for mutating actions are rejected. `control_token` is eight lowercase hexadecimal
 characters, or `-` when only focusing or no actions are possible. Review metadata
-is the complete device approval scope; previews that cannot fit are not approvable
-from the device. Metadata and control capabilities commit atomically at END.
+is a display preview, limited to 512 characters. Longer previews begin with
+`Preview truncated` and remain approvable. The bridge retains the original
+pending request and sends the decision for its exact request ID; shortening the
+display never shortens or changes the approved command or patch. Metadata and
+control capabilities commit atomically at END.
 
 AD3 adds session controls. Update the companion and Flipper app together;
 AD1, AD2, and AD3 do not handshake. The normal CLI serial interface remains available

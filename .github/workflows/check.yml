@@ -25,7 +25,11 @@ jobs:
       - run: ufbt update --hw-target=f7 --url=https://update.flipperzero.one/builds/firmware/1.5.1/flipper-z-f7-sdk-1.5.1.zip
       - run: ufbt
         working-directory: flipper
+      - run: ufbt
+        working-directory: experiments/flipper_ble
       - uses: actions/upload-artifact@v4
         with:
           name: agent-deck-firmware-1.5.1
-          path: flipper/dist/agent_deck.fap
+          path: |
+            flipper/dist/agent_deck.fap
+            experiments/flipper_ble/dist/agent_deck_ble_test.fap

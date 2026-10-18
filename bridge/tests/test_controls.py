@@ -106,8 +106,39 @@ class ControlTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controls.execute(FIRST, "approve", token)
 
-    def test_long_or_non_ascii_request_requires_pc_review(self):
-        for command in ("echo " + "x" * 600, "echo å"):
+    def test_long_preview_keeps_device_approval_for_the_exact_original_request(self):
+        for size in (600, 20000):
+            message = approval(request="long-" + str(size), command="echo " + "x" * size)
+            original = copy.deepcopy(message)
+            self.controls._message(message)
+            row = self.row(device=True)
+            self.assertIn("approve", row["actions"])
+            self.assertEqual(512, len(row["review"]))
+            self.assertTrue(row["review"].startswith("Preview truncated | Command: | echo "))
+            self.assertIn("reject", row["actions"])
+            self.controls.execute(FIRST, "approve", row["control_token"], device=True)
+            self.assertEqual((message["id"], {"decision": "accept"}), self.rpc.replies[-1])
+            self.assertEqual(original, message)
+
+    def test_preview_boundary_does_not_change_approval_capability(self):
+        overhead = len(review_request(approval(command="x"), {})["device_review"]) - 1
+        for size in (512, 513):
+            request = review_request(approval(command="x" * (size - overhead)), {})
+            self.assertTrue(request["device_approve"])
+            self.assertEqual(512, len(request["device_review"]))
+            self.assertEqual(size > 512, request["device_review"].startswith("Preview truncated | "))
+
+    def test_long_file_change_preview_keeps_device_approval(self):
+        message = {"method": "item/fileChange/requestApproval", "id": "large-patch",
+                   "params": {"itemId": "patch-item"}}
+        item = {"changes": [{"path": "example.py", "diff": "x" * 20000}]}
+        request = review_request(message, {"patch-item": item})
+        self.assertTrue(request["device_approve"])
+        self.assertEqual(512, len(request["device_review"]))
+        self.assertTrue(request["device_review"].startswith("Preview truncated | File changes:"))
+
+    def test_non_ascii_request_requires_pc_review(self):
+        for command in ("echo å",):
             self.controls._message(approval(command=command))
             self.assertIn("approve", self.row()["actions"])
             self.assertNotIn("approve", self.row(device=True)["actions"])

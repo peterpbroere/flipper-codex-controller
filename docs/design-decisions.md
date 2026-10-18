@@ -1,0 +1,58 @@
+# Implementation decision audit
+
+Audited on 2026-10-18 after the missing Flipper approval option was reported.
+This is an inventory of product and architecture choices in the current code
+for which I do not have explicit user approval in the available conversation.
+Being documented in the README does not establish that the user agreed to a
+tradeoff. This document does not approve the remaining choices.
+
+The conversation available for this audit contains the user's messages and
+partial summaries of earlier work, rather than every earlier assistant proposal.
+Where agreement cannot be established, the choice is listed for review instead
+of being represented as approved. Routine implementation details with no
+observable effect are omitted.
+
+The user explicitly chose or requested the C Flipper/Python PC direction, a
+notifications-first iteration, an agent overview, optional vibration, documenting
+discovery requirements, the named agent controls, press rather than hold for
+confirmation, and proceeding with Bluetooth. Those broad choices do not establish
+approval of the specific policies below. Session expiry was explicitly discussed
+and postponed; the current code does not expire sessions merely for inactivity.
+
+| # | Choice implemented | User-visible consequence and current status | Source |
+| --- | --- | --- | --- |
+| 1 | Disable Flipper approval if the complete preview exceeds 512 characters | **Corrected at the user's direction.** Length now only shortens the displayed preview and adds `Preview truncated` at its start. Approval still targets the exact original request, including when the full text exceeds the desktop preview limit. | [controls.py](../bridge/agent_deck/controls.py), [tests](../bridge/tests/test_controls.py) |
+| 2 | Non-ASCII approval text disables Flipper Approve | This restriction still exists, including for non-ASCII characters outside the visible portion. Other display fields are transliterated, but approval previews are treated differently. It was not changed as part of the length fix. | [controls.py](../bridge/agent_deck/controls.py) |
+| 3 | Desktop approval preview limit of 16 KiB | The companion clips its stored/displayed preview and disables its Approve action above that size. Flipper approval is now independent of this desktop limit. The existing desktop clipping has no explicit truncation marker. | [controls.py](../bridge/agent_deck/controls.py), [gui.py](../bridge/agent_deck/gui.py) |
+| 4 | Support only selected approval request types | Ordinary command and supported file-change requests can be approved. Stdin approvals, session write grants, missing command/patch details, structured answers, and other permission request types require Codex on the PC. This is the adapter's implemented coverage, not a claim that broader support is impossible. | [controls.py](../bridge/agent_deck/controls.py) |
+| 5 | Expose only one-time approval | No session-wide approval, permanent allow rule, or policy amendment option is offered. The available action is `accept` for the current request. | [controls.py](../bridge/agent_deck/controls.py) |
+| 6 | Map Reject to Cancel when Decline is unavailable | A button labelled Reject can cancel the current turn. The review text states this, but that is a materially different outcome from declining one action. | [controls.py](../bridge/agent_deck/controls.py) |
+| 7 | Show one pending approval per session, in arrival order | There is no pending-request picker. Later requests wait behind the first. The notification summary can describe the latest pending event while Controls shows the first approval's own review. | [controls.py](../bridge/agent_deck/controls.py), [model.py](../bridge/agent_deck/model.py) |
+| 8 | Continue sends a fixed prompt | It sends exactly `Continue with the next logical step.` to an idle session. The user cannot edit that message on the Flipper or choose a different preset. | [controls.py](../bridge/agent_deck/controls.py) |
+| 9 | Open on PC may create another CLI window | When an exact existing terminal mapping is unavailable, it runs `codex resume <session-id>` in a new console for the same conversation. It does not locate the original window. Focusing mapped tabs depends on Windows Terminal. | [focus.py](../bridge/agent_deck/focus.py) |
+| 10 | Require a separate review screen for Stop, Continue, Approve, and Reject | A normal OK press confirms, as requested, but selecting an action first opens its confirmation screen. These extra navigation steps and their use for Stop/Continue were implementation choices. | [agent_deck.c](../flipper/agent_deck.c), [gui.py](../bridge/agent_deck/gui.py) |
+| 11 | Serialize agent actions and do not automatically retry decisions | One action runs at a time across sessions. PC commands expire after five seconds if not started; an approval waits up to eight seconds for resolution; the Flipper shows an unconfirmed result after twelve seconds. A timeout can require checking Codex even when a decision was sent. | [service.py](../bridge/agent_deck/service.py), [controls.py](../bridge/agent_deck/controls.py), [control_channel.py](../bridge/agent_deck/control_channel.py), [agent_deck.c](../flipper/agent_deck.c) |
+| 12 | Build controls around the shared local Codex server | The bridge attaches to already-loaded sessions through the local proxy and uses `thread/resume` for active subscriptions without changing model/permission settings. Independent `--no-daemon` sessions, other servers, remote/cloud sessions, and desktop-specific sessions do not receive this same control support. | [controls.py](../bridge/agent_deck/controls.py), [codex_rpc.py](../bridge/agent_deck/codex_rpc.py) |
+| 13 | Represent reported sessions rather than every agent process | Hooks register participating sessions after their first report/prompt. Empty windows are not discovered by window enumeration. Internal subagents sharing a session ID do not get independent rows. This boundary was documented, but documentation alone is not approval of the precise behavior. | [hook.py](../bridge/agent_deck/hook.py), [model.py](../bridge/agent_deck/model.py) |
+| 14 | Limit the Flipper to the first 16 sessions | Three rows are visible at a time. Insertion order stays stable; a new attention event does not move a session to the top. Overflow is logged on the PC; the companion can list all sessions, while the Flipper cannot browse beyond the first 16. Right explicitly jumps to a waiting/error row within that set. | [model.py](../bridge/agent_deck/model.py), [protocol.py](../bridge/agent_deck/protocol.py), [agent_deck.c](../flipper/agent_deck.c) |
+| 15 | Treat turn Stop/Interrupt as IDLE and keep notification state hook-driven | Stopping a turn is not reported as successful task completion. WAIT can remain until a matching later hook clears it, even after an approval UI has changed. Parallel unrelated tool completion does not clear the pending event. | [model.py](../bridge/agent_deck/model.py), [hook.py](../bridge/agent_deck/hook.py) |
+| 16 | Show every row as OFF when the device link becomes stale | This is a connection display state, not session expiry, and does not overwrite saved agent states. The thresholds are three seconds for USB and ten seconds for BLE. The UI disables actions until the link is current. | [agent_deck.c](../flipper/agent_deck.c), [service.py](../bridge/agent_deck/service.py) |
+| 17 | Impose display and naming limits | Renames are 1-32 characters. Device text uses printable ASCII; labels are 48, paths 256, session IDs 128, reasons 30, and details 48 characters. Paths are shortened with `...`; hooks retain up to 4096 path characters. These exact limits and conversion rules were not user-selected. | [names.py](../bridge/agent_deck/names.py), [protocol.py](../bridge/agent_deck/protocol.py), [hook.py](../bridge/agent_deck/hook.py) |
+| 18 | Use one global vibration preference and one pulse per new event token | Vibration defaults on when no valid setting exists. Simultaneous alerts combine into a pulse; duplicate reports and heartbeats do not repeat it. There are no per-session mute settings or completion-specific alerts. Reopening the device app may alert again about an existing pending request. | [deck_settings.c](../flipper/deck_settings.c), [agent_deck.c](../flipper/agent_deck.c) |
+| 19 | Make USB and BLE manually selected alternatives | Both sides must select the matching transport. There is no automatic cable-based switch, automatic fallback, or simultaneous USB/BLE app data connection. Each side saves its own preference; changing the PC choice restarts the bridge. USB is the initial default. | [deck_settings.c](../flipper/deck_settings.c), [runtime.py](../bridge/agent_deck/runtime.py), [companion.py](../bridge/agent_deck/companion.py) |
+| 20 | Give Agent Deck a custom BLE identity and bond store | It advertises `Deck <device name>`, uses PIN pairing and its own bond file/MAC variant, and can migrate the diagnostic app's existing bond. The normal phone connection is unavailable while this profile is active. Windows pairing is currently done through OS Settings. | [deck_ble.c](../flipper/deck_ble.c), [bluetooth.py](../bridge/agent_deck/bluetooth.py) |
+| 21 | Run a separate background bridge and leave it running when the window closes | Closing the companion does not disconnect the Flipper. There is no tray, boot/login autostart, or system service. The manager manages one recorded bridge per checkout and one selected Flipper. | [gui.py](../bridge/agent_deck/gui.py), [runtime.py](../bridge/agent_deck/runtime.py) |
+| 22 | Ship a source-checkout/Tkinter companion rather than a packaged application | Python, its environment, and the checkout must remain in place. Hook definitions contain installation paths. Moving the checkout requires updating them. The tested desktop is Windows; equivalent Linux/macOS desktop and BLE behavior has not been established. | [install.py](../bridge/agent_deck/install.py), [gui.py](../bridge/agent_deck/gui.py), [README](../README.md) |
+| 23 | Persist session data locally without an automatic retention/deletion policy | The journal stores session identifiers, names, paths, and short event summaries in the user data directory. Bridge state, logs, command mailbox, selected BLE address, and approval previews are stored under the checkout's `.agent-deck`. These files use ordinary local storage, not application-level encryption. Full transcripts/prompts are not journaled. | [store.py](../bridge/agent_deck/store.py), [hook.py](../bridge/agent_deck/hook.py), [runtime.py](../bridge/agent_deck/runtime.py), [control_channel.py](../bridge/agent_deck/control_channel.py) |
+| 24 | Run the Flipper dashboard as a foreground FAP | The app must stay open to receive its snapshots and send controls. Exiting restores the normal device profiles. This implementation does not provide a background notification service while other Flipper apps run. Builds are pinned/tested to official firmware 1.5.1 / API 88.2. | [application.fam](../flipper/application.fam), [agent_deck.c](../flipper/agent_deck.c), [deck_ble.c](../flipper/deck_ble.c) |
+
+The exact-request IDs, request-state tokens, duplicate rejection, atomic display
+updates, and cancellation of stale confirmation screens are correctness measures
+underneath the requested controls. They remain in place when a preview is
+truncated: the displayed excerpt is never used as an executable command or as a
+replacement for the original pending request.
+
+Known testing gaps are separate from product choices: BLE long-duration use,
+range, battery use, sleep/wake recovery, and other host operating systems need
+broader testing. Unit tests and short hardware checks do not establish those
+properties.

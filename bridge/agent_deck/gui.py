@@ -37,6 +37,8 @@ class CompanionWindow:
         self.connection = tk.StringVar(value="Checking connection…")
         self.connection_hint = tk.StringVar(value="")
         self.logs_visible = False
+        self.connection_saved = dict(transport="usb", port="auto", address="")
+        self.connection_dialog = None
         root.title("Agent Deck — Companion")
         root.geometry("960x850")
         root.minsize(840, 750)
@@ -85,6 +87,8 @@ class CompanionWindow:
         ttk.Label(left, textvariable=self.connection_hint, style="Muted.TLabel", wraplength=440).pack(anchor="w", pady=(4, 0))
         self.restart = ttk.Button(status, text="Restart", command=lambda: self._control("restart"))
         self.restart.pack(side="right", padx=(8, 0))
+        self.connection_button = ttk.Button(status, text="Connection…", command=self._connection_dialog)
+        self.connection_button.pack(side="right", padx=(8, 0))
         self.toggle = ttk.Button(status, text="Start bridge", style="Accent.TButton", command=self._toggle)
         self.toggle.pack(side="right")
         heading = ttk.Frame(body)
@@ -207,16 +211,28 @@ class CompanionWindow:
 
     def _render(self, data):
         self.health = data["health"]
+        self.connection_saved = data.get("connection_settings", self.connection_saved)
+        if "bluetooth_devices" in data and self.connection_dialog and self.connection_dialog.winfo_exists():
+            devices = data["bluetooth_devices"]
+            self.bluetooth_choices = {f"{item['name']} · {item['address']}": item["address"] for item in devices}
+            self.bluetooth_picker.configure(values=list(self.bluetooth_choices))
+            if len(devices) == 1:
+                self.bluetooth_selection.set(next(iter(self.bluetooth_choices)))
+            self.bluetooth_scan_status.set(f"Found {len(devices)} device(s)." if devices else
+                                           "No Deck device found. Open Agent Deck and select BLE on the Flipper.")
         self.connection.set(self.health["message"])
         connected = self.health.get("connected")
         self.status_label.configure(foreground="#287146" if connected else MUTED)
         if connected:
-            hint = f"USB · {self.health.get('port', '')} · " + (
+            medium = "Bluetooth" if self.health.get("transport") == "bluetooth" else "USB"
+            hint = f"{medium} · {self.health.get('port', '')} · " + (
                 "Demo mode: the Flipper shows sample sessions" if self.health.get("mode") == "demo" else "Notifications are active")
         elif self.health.get("running") is None:
             hint = "Bridge controls are unavailable until its process can be verified."
         elif self.health.get("running"):
-            hint = "Open Apps → Tools → Agent Deck on your Flipper and connect a USB data cable."
+            hint = ("Open Agent Deck on the Flipper and choose BLE in its settings." if
+                    self.health.get("transport", self.connection_saved["transport"]) == "bluetooth" else
+                    "Open Apps → Tools → Agent Deck on your Flipper and connect a USB data cable.")
         else:
             hint = "Start the bridge to send session updates to your Flipper."
         self.connection_hint.set(hint)
@@ -276,6 +292,7 @@ class CompanionWindow:
         self.toggle.configure(text="Stop bridge" if running else "Start bridge",
                               state="disabled" if self.action_busy or running is None else "normal")
         self.restart.configure(state="normal" if running and not self.action_busy else "disabled")
+        self.connection_button.configure(state="disabled" if self.action_busy else "normal")
         row = self.rows.get(self.selected, {})
         for verb, button in self.agent_buttons.items():
             button.configure(state="normal" if enabled and verb in row.get("actions", []) else "disabled")
@@ -339,6 +356,67 @@ class CompanionWindow:
 
     def _toggle(self):
         self._control("stop" if self.health.get("running") else "start")
+
+    def _connection_dialog(self):
+        if self.connection_dialog and self.connection_dialog.winfo_exists():
+            self.connection_dialog.lift()
+            return
+        dialog = self.connection_dialog = tk.Toplevel(self.root)
+        dialog.title("Flipper connection")
+        dialog.geometry("650x370")
+        dialog.transient(self.root)
+        body = ttk.Frame(dialog, padding=22)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
+        mode = tk.StringVar(dialog, value="Bluetooth" if self.connection_saved["transport"] == "bluetooth" else "USB")
+        port = tk.StringVar(dialog, value=self.connection_saved["port"])
+        self.bluetooth_selection = tk.StringVar(dialog, value=self.connection_saved["address"])
+        self.bluetooth_choices = {}
+        self.bluetooth_scan_status = tk.StringVar(dialog, value="Pair Deck <name> in Windows Bluetooth Settings using its displayed PIN.")
+        ttk.Label(body, text="Connection", style="Section.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 16))
+        ttk.Label(body, text="Connect using").grid(row=1, column=0, sticky="w", padx=(0, 12))
+        picker = ttk.Combobox(body, textvariable=mode, values=["USB", "Bluetooth"], state="readonly")
+        picker.grid(row=1, column=1, columnspan=2, sticky="ew")
+        usb = ttk.Frame(body)
+        usb.grid(row=2, column=0, columnspan=3, sticky="ew", pady=16)
+        usb.columnconfigure(1, weight=1)
+        ttk.Label(usb, text="USB port").grid(row=0, column=0, padx=(0, 15))
+        ttk.Entry(usb, textvariable=port).grid(row=0, column=1, sticky="ew")
+        ttk.Label(usb, text="Use auto unless you need a specific application port.", style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=8)
+        ble = ttk.Frame(body)
+        ble.grid(row=2, column=0, columnspan=3, sticky="ew", pady=16)
+        ble.columnconfigure(0, weight=1)
+        ttk.Label(ble, text="On the Flipper: Agent Deck → Back → Connection → BLE.", style="Muted.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        self.bluetooth_picker = ttk.Combobox(ble, textvariable=self.bluetooth_selection)
+        self.bluetooth_picker.grid(row=1, column=0, sticky="ew")
+        controller = self.controller
+        ttk.Button(ble, text="Find Flipper", command=lambda: self._submit(controller.scan_bluetooth,
+                   "Bluetooth scan complete.", action=True)).grid(row=1, column=1, padx=(8, 0))
+        ttk.Label(ble, textvariable=self.bluetooth_scan_status, style="Muted.TLabel", wraplength=585).grid(row=2, column=0, columnspan=2, sticky="w", pady=10)
+        def changed(_event=None):
+            if mode.get() == "USB":
+                ble.grid_remove()
+                usb.grid()
+            else:
+                usb.grid_remove()
+                ble.grid()
+        picker.bind("<<ComboboxSelected>>", changed)
+        changed()
+        footer = ttk.Frame(body)
+        footer.grid(row=3, column=0, columnspan=3, sticky="sew", pady=(15, 0))
+        ttk.Label(footer, text="Applies to this PC and restarts the bridge.", style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
+        ttk.Button(footer, text="Cancel", command=dialog.destroy).pack(side="right")
+        def apply():
+            transport = "bluetooth" if mode.get() == "Bluetooth" else "usb"
+            selected = self.bluetooth_selection.get().strip()
+            address = self.bluetooth_choices.get(selected, selected)
+            usb_port = port.get()
+            dialog.destroy()
+            self._submit(lambda: controller.connect(transport, usb_port, address),
+                         "Connection saved. Bridge reconnecting.", action=True)
+        ttk.Button(footer, text="Save & connect", style="Accent.TButton", command=apply).pack(side="right", padx=8)
+        dialog.bind("<Escape>", lambda event: dialog.destroy())
+        dialog.grab_set()
 
     def _control(self, action):
         controller = self.controller

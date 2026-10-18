@@ -6,7 +6,8 @@
 
 typedef enum {
     DeckMessageInput,
-    DeckMessageLine
+    DeckMessageLine,
+    DeckMessageReset
 } DeckMessageType;
 
 typedef struct {

@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from agent_deck.companion import Companion
-from agent_deck.runtime import BridgeManager, StatusWriter, read_json, write_json
+from agent_deck.runtime import BridgeManager, StatusWriter, read_json, write_json, connection_settings
 from agent_deck.store import EventReader, EventStore
 
 
@@ -64,6 +64,22 @@ class CompanionTests(unittest.TestCase):
         self.assertFalse(result["health"]["connected"])
         self.assertIn("Could not read activity", result["error"])
 
+    def test_invalid_connection_does_not_stop_running_bridge(self):
+        controller = Companion(self.path, self.manager)
+        with patch.object(self.manager, "stop") as stop:
+            with self.assertRaises(ValueError):
+                controller.connect("bluetooth", address="")
+        stop.assert_not_called()
+
+    def test_configure_connection_restarts_using_saved_settings(self):
+        controller = Companion(self.path, self.manager)
+        with patch("agent_deck.bluetooth.backend"), patch.object(self.manager, "stop") as stop, \
+                patch.object(self.manager, "start") as start:
+            result = controller.connect("bluetooth", address="80:E1:27:37:4B:48")
+        stop.assert_called_once()
+        start.assert_called_once_with(store_path=self.path)
+        self.assertEqual("bluetooth", result["connection_settings"]["transport"])
+
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
@@ -80,6 +96,22 @@ class RuntimeTests(unittest.TestCase):
         process.cmdline.return_value = [str(self.manager.interpreter), "-m", "agent_deck", "run"]
         process.is_running.return_value = True
         return process
+
+    def test_connection_defaults_and_saved_bluetooth_selection(self):
+        self.assertEqual(dict(transport="usb", port="auto", address=""), self.manager.connection())
+        self.manager.configure("bluetooth", address="80:E1:27:37:4B:48")
+        self.assertEqual("80:E1:27:37:4B:48", self.manager.connection()["address"])
+        for settings in (("invalid", "auto", ""), ("bluetooth", "auto", ""),
+                         ("bluetooth", "auto", "arbitrary command")):
+            with self.assertRaises(ValueError):
+                connection_settings(*settings)
+
+    def test_restart_preserves_bluetooth_address_and_demo_mode(self):
+        write_json(self.manager.record_path, dict(transport="bluetooth", port="auto",
+                   address="80:E1:27:37:4B:48", demo=True, store="test.sqlite3"))
+        with patch.object(self.manager, "stop"), patch.object(self.manager, "start") as start:
+            self.manager.restart()
+        start.assert_called_once_with("auto", True, "test.sqlite3", "bluetooth", "80:E1:27:37:4B:48")
 
     def test_reused_pid_is_never_stopped(self):
         process = self.fake_process()

@@ -29,7 +29,7 @@ class Context:
 
 
 def review_request(message, items):
-    """Keep the complete approval scope; never silently approve hidden details."""
+    """Keep the exact request while preparing bounded display previews."""
     params = message["params"]
     supported = True
     if message["method"] == "item/commandExecution/requestApproval":
@@ -56,12 +56,12 @@ def review_request(message, items):
     can_reject = bool(reject_decision)
     if reject_decision == "cancel":
         text += "\nReject cancels this turn."
-    # A full preview is required on each surface. Large previews remain available
-    # in the CLI, and can still be rejected from Agent Deck.
-    can_accept = can_accept and len(text) <= 16384
     wire = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " | ")
-    device_accept = can_accept and len(wire) <= 512 and all(32 <= ord(c) <= 126 for c in wire)
-    return {"message": message, "review": text[:16384], "approve": can_accept,
+    device_accept = can_accept and all(32 <= ord(c) <= 126 for c in wire)
+    if len(wire) > 512:
+        marker = "Preview truncated | "
+        wire = marker + wire[:512 - len(marker)]
+    return {"message": message, "review": text[:16384], "approve": can_accept and len(text) <= 16384,
             "reject": can_reject, "reject_decision": reject_decision, "device_approve": device_accept,
             "device_review": wire if device_accept else (
                 "Full request requires PC review. Reject cancels this turn." if reject_decision == "cancel" else
