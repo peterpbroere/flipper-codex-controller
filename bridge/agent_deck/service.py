@@ -12,7 +12,7 @@ from .controls import Controls
 from .control_channel import CommandChannel, ControlPublisher
 from .model import Deck, demo_deck
 from .processes import classify_owner, is_alive
-from .protocol import parse_action, snapshot
+from .protocol import parse_action, parse_yolo_setting, snapshot
 from .store import EventStore
 from .runtime import StatusWriter, read_json
 from .transport import SerialLink
@@ -138,13 +138,20 @@ def run(port="auto", store_path=None, demo=False, duration=None, focus_script=No
                 signature = current_signature
             was_connected = link.connected
             if not link.connect():
+                if was_connected:
+                    controls.set_yolo_enabled(False)
                 time.sleep(0.1)
                 continue
             if not was_connected:
                 deck.new_connection()
                 next_frame = 0
                 last_error = ""
+                controls.set_yolo_enabled(False)
             try:
+                if not was_connected:
+                    # A reconnect is a fresh arming boundary: clear the saved
+                    # device toggle before accepting any new YOLO state.
+                    link.send(b"DISARM\tYOLO\n")
                 if time.monotonic() >= next_frame and not link.busy:
                     session, revision, rows = deck.wire_view()
                     if not focus.enabled:
@@ -178,6 +185,10 @@ def run(port="auto", store_path=None, demo=False, duration=None, focus_script=No
                         except (ValueError, KeyError) as error:
                             log.warning("Action ignored: %s", error)
                             link.send(b"RESULT\tERROR\n")
+                    else:
+                        yolo = parse_yolo_setting(raw)
+                        if yolo is not None:
+                            controls.set_yolo_enabled(yolo)
                 if pending_action and pending_action[0].done():
                     future, connection, sequence, verb = pending_action
                     pending_action = None
@@ -206,6 +217,7 @@ def run(port="auto", store_path=None, demo=False, duration=None, focus_script=No
                 log.warning("%s disconnected: %s", transport.upper(), error)
                 last_error = str(error)
                 link.close()
+                controls.set_yolo_enabled(False)
             if transport == "bluetooth":
                 time.sleep(.02)
     except KeyboardInterrupt:

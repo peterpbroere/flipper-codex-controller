@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
+import re
 import secrets
 import threading
 import time
@@ -15,6 +16,32 @@ log = logging.getLogger(__name__)
 ACTION_BITS = {"focus": 1, "stop": 2, "continue": 4, "approve": 8, "reject": 16}
 CONTINUE_TEXT = "Continue with the next logical step."
 APPROVAL_METHODS = {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}
+USER_INPUT_METHOD = "item/tool/requestUserInput"
+RECOMMENDED = re.compile(r"\(\s*recommended\s*\)\s*$", re.IGNORECASE)
+
+
+def recommended_answers(params):
+    """Return exact recommended choice labels only when every question is unambiguous."""
+    questions = params.get("questions")
+    if not isinstance(questions, list) or not questions:
+        return None
+    answers = {}
+    for question in questions:
+        if not isinstance(question, dict) or question.get("isSecret") or question.get("isOther"):
+            return None
+        question_id = question.get("id")
+        options = question.get("options")
+        if not isinstance(question_id, str) or not question_id or question_id in answers:
+            return None
+        if not isinstance(options, list):
+            return None
+        recommended = [option.get("label") for option in options
+                       if isinstance(option, dict) and isinstance(option.get("label"), str)
+                       and RECOMMENDED.search(option["label"])]
+        if len(recommended) != 1:
+            return None
+        answers[question_id] = {"answers": [recommended[0]]}
+    return {"answers": answers}
 
 
 @dataclass
@@ -23,6 +50,7 @@ class Context:
     turn: str = ""
     revision: int = 0
     requests: dict = field(default_factory=dict)
+    user_inputs: dict = field(default_factory=dict)
     items: dict = field(default_factory=dict)
     busy: bool = False
     hook_event: str = "-"
@@ -79,6 +107,8 @@ class Controls:
         self.lock = threading.RLock()
         self.contexts = {}
         self.subscribed = set()
+        self.yolo_enabled = False
+        self._auto_response_ids = set()
         self.nonce = secrets.token_hex(16)
         self.next_poll = 0
         self.error = ""
@@ -91,36 +121,158 @@ class Controls:
     def _changed(self, context):
         context.revision += 1
 
+    def set_yolo_enabled(self, enabled):
+        enabled = bool(enabled)
+        responses = []
+        with self.lock:
+            changed = self.yolo_enabled != enabled
+            self.yolo_enabled = enabled
+            if enabled:
+                for context in self.contexts.values():
+                    responses.extend(self._prepare_pending_yolo(context))
+        if changed:
+            log.warning("YOLO state received from Flipper: %s", "enabled" if enabled else "disabled")
+        self._send_automatic_responses(responses)
+
+    def _mark_auto_response(self, request_id):
+        self._auto_response_ids.add(str(request_id))
+        if len(self._auto_response_ids) > 512:
+            self._auto_response_ids.pop()
+
+    def _prepare_pending_yolo(self, context):
+        responses = []
+        for key, request in context.requests.items():
+            if (request.get("sent") or key in self._auto_response_ids or
+                    context.status != "active" or not context.turn):
+                continue
+            message = request["message"]
+            if not self._can_auto_approve(message):
+                continue
+            if message["params"].get("turnId") != context.turn:
+                continue
+            request["sent"] = True
+            self._mark_auto_response(key)
+            responses.append((message["id"], {"decision": "accept"}, message["method"]))
+        for key, message in context.user_inputs.items():
+            if key in self._auto_response_ids or context.status != "active":
+                continue
+            if (message["params"].get("turnId") != context.turn or
+                    message["params"].get("isBlocking") is not True):
+                continue
+            result = recommended_answers(message["params"])
+            if result is None:
+                continue
+            self._mark_auto_response(key)
+            responses.append((message["id"], result, message["method"]))
+        return responses
+
+    def _send_automatic_responses(self, responses):
+        for request_id, result, method in responses:
+            try:
+                self.rpc.respond(request_id, result)
+                if method == USER_INPUT_METHOD:
+                    log.warning("YOLO answered recommended choices for request %s", request_id)
+                else:
+                    log.warning("YOLO auto-approved %s request %s", method, request_id)
+            except Exception as error:
+                log.warning("YOLO response for %s could not be confirmed; it will not be retried: %s",
+                            request_id, error)
+
+    @staticmethod
+    def _can_auto_approve(message):
+        if message.get("method") not in APPROVAL_METHODS:
+            return False
+        params = message.get("params", {})
+        if message["method"] == "item/commandExecution/requestApproval" and params.get("kind", "command") != "command":
+            return False
+        if message["method"] == "item/fileChange/requestApproval" and params.get("grantRoot"):
+            return False
+        decisions = params.get("availableDecisions")
+        return decisions is None or "accept" in decisions
+
+    @staticmethod
+    def _auto_approval_skip_reason(message, is_current):
+        """Explain the eligibility check without logging command or patch contents."""
+        if not is_current:
+            return "request belongs to a different turn"
+        if message.get("method") not in APPROVAL_METHODS:
+            return "approval method is unsupported"
+        params = message.get("params", {})
+        if (message["method"] == "item/commandExecution/requestApproval" and
+                params.get("kind", "command") != "command"):
+            return "request is not a command approval"
+        if message["method"] == "item/fileChange/requestApproval" and params.get("grantRoot"):
+            return "request asks for a session-wide write grant"
+        decisions = params.get("availableDecisions")
+        if decisions is not None and "accept" not in decisions:
+            return "accept is not an available decision"
+        return "eligible"
+
     def _message(self, message):
         method, params = message.get("method"), message.get("params", {})
         if "id" in message:
             log.info("Codex server request: %s (fields: %s)", method, ", ".join(params))
         thread = params.get("threadId")
+        automatic_response = None
         with self.lock:
             context = self.contexts.get(thread)
             if not context:
+                if "id" in message and method in APPROVAL_METHODS | {USER_INPUT_METHOD}:
+                    log.warning("YOLO could not handle request %s (%s): session is not tracked",
+                                message["id"], method)
                 return
             if method in APPROVAL_METHODS and "id" in message:
                 key = str(message["id"])
                 if key not in context.requests:
-                    context.requests[key] = review_request(message, context.items)
+                    request = review_request(message, context.items)
+                    context.requests[key] = request
+                    current_turn = context.turn
                     context.turn = params["turnId"]
                     context.status = "active"
+                    is_current = not current_turn or current_turn == params["turnId"]
+                    if key in self._auto_response_ids:
+                        request["sent"] = True
+                    elif self.yolo_enabled:
+                        reason = self._auto_approval_skip_reason(message, is_current)
+                        log.warning("YOLO saw approval request %s (%s): %s",
+                                    key, method, reason)
+                        if reason == "eligible":
+                            request["sent"] = True
+                            self._mark_auto_response(key)
+                            automatic_response = (message["id"], {"decision": "accept"}, method)
+                    else:
+                        log.info("YOLO did not handle approval request %s: device setting is off", key)
                     self._changed(context)
+            elif method == USER_INPUT_METHOD and "id" in message:
+                key = str(message["id"])
+                if key not in context.user_inputs:
+                    context.user_inputs[key] = message
+                if (key not in self._auto_response_ids and self.yolo_enabled and
+                        context.status == "active" and params.get("turnId") == context.turn):
+                    response = (recommended_answers(params)
+                                if params.get("isBlocking") is True else None)
+                    if response is not None:
+                        self._mark_auto_response(key)
+                        automatic_response = (message["id"], response, method)
             elif method == "serverRequest/resolved":
-                if context.requests.pop(str(params.get("requestId")), None):
+                request_id = str(params.get("requestId"))
+                removed = context.requests.pop(request_id, None)
+                removed_input = context.user_inputs.pop(request_id, None)
+                if removed or removed_input:
                     self._changed(context)
             elif method == "turn/started":
                 turn = params.get("turn", {}).get("id", "")
                 if context.turn != turn or context.status != "active":
                     context.turn, context.status = turn, "active"
                     context.requests.clear()
+                    context.user_inputs.clear()
                     context.items.clear()
                     context.refresh_attachment = True
                     self._changed(context)
             elif method == "thread/closed":
                 context.status, context.turn = "notLoaded", ""
                 context.requests.clear()
+                context.user_inputs.clear()
                 context.refresh_attachment = True
                 self.subscribed.discard(thread)
                 self._changed(context)
@@ -129,6 +281,7 @@ class Controls:
                 if params.get("turn", {}).get("id") == context.turn:
                     context.status, context.turn = "idle", ""
                     context.requests.clear()
+                    context.user_inputs.clear()
                     context.items.clear()
                     self._changed(context)
             elif method == "thread/status/changed":
@@ -138,6 +291,7 @@ class Controls:
                     if status != "active":
                         context.turn = ""
                         context.requests.clear()
+                        context.user_inputs.clear()
                     self._changed(context)
             elif method in {"item/started", "item/completed"}:
                 item = params.get("item", {})
@@ -150,6 +304,17 @@ class Controls:
                         del context.requests[key]
                     if removed:
                         self._changed(context)
+        if automatic_response:
+            request_id, result, response_method = automatic_response
+            try:
+                self.rpc.respond(request_id, result)
+                if response_method == USER_INPUT_METHOD:
+                    log.warning("YOLO answered recommended choices for request %s", request_id)
+                else:
+                    log.warning("YOLO auto-approved %s request %s", response_method, request_id)
+            except Exception as error:
+                log.warning("YOLO response for %s could not be confirmed; it will not be retried: %s",
+                            request_id, error)
 
     def _recover_file_reviews(self, thread):
         with self.lock:

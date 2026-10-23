@@ -19,6 +19,20 @@ Device: `HELLO\tAD3\n`
 The bridge verifies this handshake before transmitting state. `auto` probes only
 Flipper USB VID/PID 0483:5740 ports, never Bluetooth serial ports.
 
+## Optional YOLO setting
+
+On each new connection, the PC disarms the saved Flipper setting:
+
+```text
+DISARM\tYOLO\n
+SETTING\tYOLO\t0|1\n
+```
+
+The Flipper sends `SETTING\tYOLO\t0|1\n` after a disarm and immediately when
+the setting changes. A USB/BLE disconnect clears and saves YOLO as off; a
+reconnection never silently re-arms it. These lines do not alter AD3 snapshots
+or action records.
+
 ## Atomic snapshots
 
 ```text

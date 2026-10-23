@@ -24,7 +24,7 @@ and postponed; the current code does not expire sessions merely for inactivity.
 | 1 | Disable Flipper approval if the complete preview exceeds 512 characters | **Corrected at the user's direction.** Length now only shortens the displayed preview and adds `Preview truncated` at its start. Approval still targets the exact original request, including when the full text exceeds the desktop preview limit. | [controls.py](../bridge/agent_deck/controls.py), [tests](../bridge/tests/test_controls.py) |
 | 2 | Non-ASCII approval text disables Flipper Approve | **Corrected at the user's direction.** The Flipper uses the existing transliteration/replacement rules for its preview. Approval remains available for the exact original pending request; desktop previews retain Unicode. | [controls.py](../bridge/agent_deck/controls.py) |
 | 3 | Desktop approval preview limit of 16 KiB | **Corrected at the user's direction.** The display remains bounded to 16 KiB and longer previews are explicitly marked `Preview truncated`. Preview length no longer disables approval on either surface. | [controls.py](../bridge/agent_deck/controls.py), [gui.py](../bridge/agent_deck/gui.py) |
-| 4 | Support only selected approval request types | Ordinary command and supported file-change requests can be approved. Stdin approvals, session write grants, missing command/patch details, structured answers, and other permission request types require Codex on the PC. This is the adapter's implemented coverage, not a claim that broader support is impossible. | [controls.py](../bridge/agent_deck/controls.py) |
+| 4 | Support selected approval and question request types | Ordinary command and supported file-change requests can be approved. Stdin approvals, session-wide write grants, missing command/patch details, and other permission request types require Codex on the PC. Structured answers can be handled by opt-in YOLO mode only when every blocking question has exactly one explicitly recommended option. This describes current adapter coverage, not a claim that broader support is impossible. | [controls.py](../bridge/agent_deck/controls.py) |
 | 5 | Expose only one-time approval | No session-wide approval, permanent allow rule, or policy amendment option is offered. The available action is `accept` for the current request. | [controls.py](../bridge/agent_deck/controls.py) |
 | 6 | Map Reject to Cancel when Decline is unavailable | A button labelled Reject can cancel the current turn. The review text states this, but that is a materially different outcome from declining one action. | [controls.py](../bridge/agent_deck/controls.py) |
 | 7 | Show one pending approval per session, in arrival order | There is no pending-request picker. Later requests wait behind the first. The notification summary can describe the latest pending event while Controls shows the first approval's own review. | [controls.py](../bridge/agent_deck/controls.py), [model.py](../bridge/agent_deck/model.py) |
@@ -51,6 +51,15 @@ updates, and cancellation of stale confirmation screens are correctness measures
 underneath the requested controls. They remain in place when a preview is
 truncated: the displayed excerpt is never used as an executable command or as a
 replacement for the original pending request.
+
+The user approved an optional YOLO setting on the Flipper Settings screen, beside
+Vibration and Connection. It is saved on the device and off by default. When
+enabled, it accepts supported command and file-change requests once and answers
+blocking structured questions only when each question has exactly one
+recommended option, using that exact label. Free-text and ambiguous questions
+remain unanswered. The user chose to disarm and save YOLO off on any disconnect,
+without automatic re-arming after reconnect. Session-wide write grants remain
+manual; YOLO applies to individual command and file-change approval requests.
 
 Known testing gaps are separate from product choices: BLE long-duration use,
 range, battery use, sleep/wake recovery, and other host operating systems need

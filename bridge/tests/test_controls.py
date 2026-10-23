@@ -3,7 +3,8 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from agent_deck.controls import Controls, CONTINUE_TEXT, review_request
+from agent_deck.controls import (Controls, CONTINUE_TEXT, USER_INPUT_METHOD,
+                                 recommended_answers, review_request)
 
 FIRST = "01a14af1-cf93-7563-8aa2-719a56c7e167"
 SECOND = "01a14a17-6b50-78e1-a12d-49e8235461bc"
@@ -42,6 +43,15 @@ def approval(request="request-1", command="echo hello", **kwargs):
     return {"id": request, "method": "item/commandExecution/requestApproval", "params": {
         "threadId": FIRST, "turnId": "turn-" + FIRST, "itemId": "item-" + request,
         "command": command, "cwd": "C:\\dev", **kwargs}}
+
+
+def user_input(request="question-1", questions=None):
+    return {"id": request, "method": USER_INPUT_METHOD, "params": {
+        "threadId": FIRST, "turnId": "turn-" + FIRST, "itemId": "tool-call-1",
+        "isBlocking": True, "questions": questions or [{"id": "layout", "header": "Layout",
+            "question": "Which layout?", "options": [
+                {"label": "Compact", "description": "Use less space."},
+                {"label": "Detailed (Recommended)", "description": "Show more information."}]}]}}
 
 
 class ControlTests(unittest.TestCase):
@@ -87,6 +97,53 @@ class ControlTests(unittest.TestCase):
             self.controls.execute(FIRST, verb, self.row()["control_token"])
             self.assertEqual((verb, {"decision": decision}), self.rpc.replies[-1])
             self.assertEqual(other, self.row(SECOND)["control_token"])
+
+    def test_yolo_answers_only_questions_with_one_recommended_choice(self):
+        request = user_input()
+        self.controls._message(request)
+        self.assertEqual([], self.rpc.replies)
+        self.controls.set_yolo_enabled(True)
+        self.controls._message(request)
+        self.assertEqual([(request["id"], {"answers": {"layout": {
+            "answers": ["Detailed (Recommended)"]}}})], self.rpc.replies)
+        self.controls._message(request)
+        self.assertEqual(1, len(self.rpc.replies))
+
+    def test_yolo_leaves_ambiguous_secret_other_and_free_text_questions_unanswered(self):
+        cases = [
+            [{"id": "one", "header": "A", "question": "Choose", "options": [
+                {"label": "A"}, {"label": "B"}]}],
+            [{"id": "one", "header": "A", "question": "Choose", "isSecret": True,
+              "options": [{"label": "A (Recommended)"}]}],
+            [{"id": "one", "header": "A", "question": "Choose", "isOther": True,
+              "options": [{"label": "A (Recommended)"}]}],
+            [{"id": "one", "header": "A", "question": "Write a response", "options": None}],
+            [{"id": "one", "header": "A", "question": "Choose", "options": [
+                {"label": "A (Recommended)"}, {"label": "B (Recommended)"}]}],
+        ]
+        self.controls.set_yolo_enabled(True)
+        for index, questions in enumerate(cases):
+            self.controls._message(user_input("ambiguous-" + str(index), questions))
+        self.assertEqual([], self.rpc.replies)
+        self.assertIsNone(recommended_answers({"questions": cases[0]}))
+
+    def test_yolo_auto_approves_command_and_file_requests_only_when_accept_is_available(self):
+        self.controls.set_yolo_enabled(True)
+        command = approval("yolo-command", availableDecisions=["accept", "decline"])
+        file_change = {"id": "yolo-file", "method": "item/fileChange/requestApproval", "params": {
+            "threadId": FIRST, "turnId": "turn-" + FIRST, "itemId": "patch-1",
+            "availableDecisions": ["accept", "decline"]}}
+        directory_grant = {"id": "yolo-grant", "method": "item/fileChange/requestApproval", "params": {
+            "threadId": FIRST, "turnId": "turn-" + FIRST, "itemId": "grant-1",
+            "grantRoot": "C:/", "availableDecisions": ["accept", "decline"]}}
+        unavailable = approval("yolo-unavailable", availableDecisions=["decline"])
+        self.controls._message(command)
+        self.controls._message(file_change)
+        self.controls._message(directory_grant)
+        self.controls._message(unavailable)
+        self.assertEqual([(command["id"], {"decision": "accept"}),
+                          (file_change["id"], {"decision": "accept"})], self.rpc.replies)
+        self.assertNotIn("approve", self.row()["actions"])
 
     def test_parallel_resolution_and_pc_answer_invalidate_stale_screen(self):
         self.controls._message(approval("one"))

@@ -38,6 +38,14 @@ These instructions apply to this entire repository.
   request ID. Preserve stale-request, duplicate-action, and connection checks.
 - Confirmation uses a normal button press. Do not require a hold to approve or
   confirm an agent control.
+- YOLO is an opt-in Flipper Settings toggle beside Vibration and Connection,
+  saved on the device and off by default. When enabled, it may accept supported
+  command/file-change requests once and answer blocking structured questions
+  only when every question has exactly one recommended option. Send Codex the
+  exact recommended label and preserve exact request IDs. Never infer answers
+  for free-text, secret, ambiguous, or unsupported questions. Do not silently
+  include session-wide write grants; those remain manual. A USB/BLE disconnect
+  disarms YOLO and saves it off; reconnecting must not silently re-arm it.
 - Vibration must be possible to turn off. Preserve the user's saved setting;
   do not silently re-enable it during tests, reconnects, or updates.
 - USB and Bluetooth must carry the same supported session notifications and

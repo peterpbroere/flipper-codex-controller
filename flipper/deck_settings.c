@@ -68,3 +68,34 @@ bool deck_settings_save_bluetooth(bool bluetooth) {
     furi_record_close(RECORD_STORAGE);
     return saved;
 }
+
+bool deck_settings_load_yolo(void) {
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* file = storage_file_alloc(storage);
+    uint8_t data[5] = {0};
+    bool enabled = false;
+    if(storage_file_open(file, APP_DATA_PATH("yolo.bin"), FSAM_READ, FSOM_OPEN_EXISTING)) {
+        enabled = storage_file_read(file, data, sizeof(data)) == sizeof(data) &&
+                  memcmp(data, "ADY\1", 4) == 0 && data[4] == 1;
+        storage_file_close(file);
+    }
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+    return enabled;
+}
+
+bool deck_settings_save_yolo(bool enabled) {
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(storage, APP_DATA_PATH(""));
+    File* file = storage_file_alloc(storage);
+    uint8_t data[5] = {'A', 'D', 'Y', 1, enabled ? 1 : 0};
+    bool saved = false;
+    if(storage_file_open(file, APP_DATA_PATH("yolo.bin"), FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        saved = storage_file_write(file, data, sizeof(data)) == sizeof(data);
+        saved = storage_file_sync(file) && saved;
+        storage_file_close(file);
+    }
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+    return saved;
+}

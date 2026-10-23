@@ -12,7 +12,7 @@ from unittest.mock import patch
 from agent_deck.hook import normalize
 from agent_deck.install import merged_hooks
 from agent_deck.model import Deck, demo_deck
-from agent_deck.protocol import MAX_AGENTS, MAX_LINE, Action, parse_action, snapshot
+from agent_deck.protocol import MAX_AGENTS, MAX_LINE, Action, parse_action, parse_yolo_setting, snapshot
 from agent_deck.service import drain, remove_dead
 from agent_deck.store import EventStore
 from agent_deck.transport import Lines
@@ -155,6 +155,15 @@ class ProtocolTests(unittest.TestCase):
                     b"ACT\tabcdef12\t4294967296\tagent1\tfocus\t-\n", b"ACT\tabcdef12\t1\tagent1\tfocus\t-",
                     b"ACT\twrong\t1\tagent1\tfocus\t-\n"):
             with self.subTest(raw=raw), self.assertRaises(ValueError): parse_action(raw)
+
+    def test_yolo_setting_parser_accepts_only_well_formed_boolean_updates(self):
+        self.assertIs(parse_yolo_setting(b"SETTING\tYOLO\t1\n"), True)
+        self.assertIs(parse_yolo_setting(b"SETTING\tYOLO\t0\n"), False)
+        for raw in (b"SETTING\tYOLO\t2\n", b"SETTING\tOTHER\t1\n",
+                    b"SETTING\tYOLO\t1", b"SETTING\tYOLO\t1\tEXTRA\n",
+                    b"SETTING\tYOLO\t\xff\n", b"x" * MAX_LINE + b"\n"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(parse_yolo_setting(raw))
 
     def test_chunked_lines_and_oversize_resynchronization(self):
         lines = Lines()

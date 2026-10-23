@@ -44,6 +44,7 @@ typedef struct {
     uint32_t action_sent;
     DeckScreen screen;
     bool vibration;
+    bool yolo;
     bool connected;
     uint32_t last_update;
     uint32_t sequence;
@@ -55,6 +56,18 @@ typedef struct {
 
 static bool send_line(AgentDeck* app, const char* line) {
     return app->bluetooth ? deck_ble_send(app->ble, line) : deck_usb_send(app->usb, line);
+}
+
+static void send_yolo_state(AgentDeck* app) {
+    char line[32];
+    snprintf(line, sizeof(line), "SETTING\tYOLO\t%u\n", app->yolo ? 1 : 0);
+    send_line(app, line);
+}
+
+static void disarm_yolo(AgentDeck* app) {
+    if(!app->yolo) return;
+    app->yolo = false;
+    deck_settings_save_yolo(false);
 }
 
 static const char* action_names[] =
@@ -126,16 +139,19 @@ static void draw(Canvas* canvas, void* context) {
     if(app->screen == ScreenSettings) {
         canvas_draw_str(canvas, 1, 8, "Settings");
         canvas_draw_line(canvas, 0, 10, 127, 10);
-        canvas_draw_box(canvas, 0, 16 + 15 * app->settings_selected, 128, 13);
+        canvas_draw_box(canvas, 0, 14 + 12 * app->settings_selected, 128, 11);
         canvas_set_color(canvas, ColorWhite);
         if(app->settings_selected != 0) canvas_set_color(canvas, ColorBlack);
-        canvas_draw_str(canvas, 3, 25, "Vibration");
-        canvas_draw_str(canvas, 102, 25, app->vibration ? "On" : "Off");
+        canvas_draw_str(canvas, 3, 23, "Vibration");
+        canvas_draw_str(canvas, 102, 23, app->vibration ? "On" : "Off");
         canvas_set_color(canvas, app->settings_selected == 1 ? ColorWhite : ColorBlack);
-        canvas_draw_str(canvas, 3, 40, "Connection");
-        canvas_draw_str(canvas, 90, 40, app->bluetooth ? "BLE" : "USB");
+        canvas_draw_str(canvas, 3, 35, "Connection");
+        canvas_draw_str(canvas, 90, 35, app->bluetooth ? "BLE" : "USB");
+        canvas_set_color(canvas, app->settings_selected == 2 ? ColorWhite : ColorBlack);
+        canvas_draw_str(canvas, 3, 47, "YOLO");
+        canvas_draw_str(canvas, 102, 47, app->yolo ? "On" : "Off");
         canvas_set_color(canvas, ColorBlack);
-        canvas_draw_line(canvas, 0, 53, 127, 53);
+        canvas_draw_line(canvas, 0, 52, 127, 52);
         canvas_draw_str(canvas, 1, 63, "OK:Toggle  Back:List");
     } else if(app->screen == ScreenActions && app->current.count) {
         DeckRow* row = &app->current.rows[app->selected];
@@ -342,11 +358,19 @@ static bool input(AgentDeck* app, InputEvent event) {
         if(event.key == InputKeyBack || event.key == InputKeyLeft)
             app->screen = ScreenOverview;
         else if(event.key == InputKeyUp || event.key == InputKeyDown)
-            app->settings_selected = 1 - app->settings_selected;
+            app->settings_selected = (app->settings_selected + 1) % 3;
         else if(event.key == InputKeyOk && app->settings_selected == 1) {
             if(deck_settings_save_bluetooth(!app->bluetooth))
                 app->switch_transport = true;
             else
+                toast(app, "Could not save setting");
+        } else if(event.key == InputKeyOk && app->settings_selected == 2) {
+            bool enabled = !app->yolo;
+            if(deck_settings_save_yolo(enabled)) {
+                app->yolo = enabled;
+                send_yolo_state(app);
+                toast(app, app->yolo ? "YOLO enabled" : "YOLO off");
+            } else
                 toast(app, "Could not save setting");
         } else if(event.key == InputKeyOk) {
             if(deck_settings_save(!app->vibration)) {
@@ -437,6 +461,11 @@ static void incoming_line(AgentDeck* app, char* line) {
         send_line(app, "HELLO\tAD3\n");
         return;
     }
+    if(strcmp(line, "DISARM\tYOLO") == 0) {
+        disarm_yolo(app);
+        send_yolo_state(app);
+        return;
+    }
     if(strncmp(line, "RESULT\t", 7) == 0) {
         unsigned long sequence;
         char status[8], verb[12];
@@ -468,6 +497,7 @@ static void incoming_line(AgentDeck* app, char* line) {
         if(deck_parse_line(&app->parser, line, &app->current)) {
             app->last_update = furi_get_tick();
             app->connected = true;
+            send_yolo_state(app);
             for(size_t i = 0; i < app->current.count; i++) {
                 if(strcmp(app->current.rows[i].id, selected) == 0) app->selected = i;
             }
@@ -517,6 +547,7 @@ int32_t agent_deck_app(void* context) {
     memset(app, 0, sizeof(*app));
     app->vibration = deck_settings_load();
     app->bluetooth = deck_settings_load_bluetooth();
+    app->yolo = deck_settings_load_yolo();
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->events = furi_message_queue_alloc(32, sizeof(DeckMessage));
     app->notifications = furi_record_open(RECORD_NOTIFICATION);
@@ -539,6 +570,7 @@ int32_t agent_deck_app(void* context) {
                 running = input(app, message.data.input);
             else if(message.type == DeckMessageReset) {
                 app->connected = app->action_pending = false;
+                disarm_yolo(app);
                 app->parser.active = false;
                 app->current.session[0] = 0;
                 if(app->screen == ScreenConfirm) app->screen = ScreenActions;
@@ -546,8 +578,10 @@ int32_t agent_deck_app(void* context) {
                 incoming_line(app, message.data.line);
         }
         if(app->connected &&
-           furi_get_tick() - app->last_update > furi_ms_to_ticks(app->bluetooth ? 10000 : 3000))
+           furi_get_tick() - app->last_update > furi_ms_to_ticks(app->bluetooth ? 10000 : 3000)) {
             app->connected = false;
+            disarm_yolo(app);
+        }
         if(app->action_pending && furi_get_tick() - app->action_sent > furi_ms_to_ticks(12000)) {
             app->action_pending = false;
             toast(app, "Not confirmed - check PC");
@@ -564,6 +598,7 @@ int32_t agent_deck_app(void* context) {
             furi_mutex_acquire(app->mutex, FuriWaitForever);
             app->bluetooth = !app->bluetooth;
             app->connected = app->action_pending = false;
+            disarm_yolo(app);
             app->parser.active = false;
             app->current.session[0] = 0;
             app->switch_transport = false;

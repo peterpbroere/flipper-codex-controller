@@ -46,6 +46,19 @@ def parse_action(raw: bytes) -> Action:
     return Action(session, int(sequence), agent_id, verb, token)
 
 
+def parse_yolo_setting(raw: bytes):
+    """Parse a Flipper YOLO state update; None means this is not a valid update."""
+    if len(raw) > MAX_LINE or not raw.endswith(b"\n"):
+        return None
+    try:
+        fields = raw.decode("ascii").rstrip("\r\n").split("\t")
+    except UnicodeDecodeError:
+        return None
+    if len(fields) != 3 or fields[:2] != ["SETTING", "YOLO"] or fields[2] not in {"0", "1"}:
+        return None
+    return fields[2] == "1"
+
+
 def snapshot(session: str, revision: int, agents: list[dict]) -> bytes:
     if not TOKEN.fullmatch(session) or len(agents) > MAX_AGENTS:
         raise ValueError("Invalid snapshot")

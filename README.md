@@ -35,6 +35,10 @@ desktop-specific conversation navigation is not implemented.
   do not repeat it. See question coverage below for tool-specific limitations.
 - A saved vibration on/off preference. Muting leaves the screen notifications
   active. When enabled, the Flipper's global notification settings still apply.
+- An optional, saved YOLO toggle in Flipper Settings. When enabled, it accepts
+  command and file-change approvals and answers blocking structured questions
+  only when every question has exactly one recommended option. Ambiguous and
+  free-text questions stay for you to answer in Codex.
 - USB handshake, automatic reconnect, stale-status indication, and bounded parsing.
 - Optional Windows Terminal focusing for sessions with a known tab mapping.
 - A local event journal that can recover reported sessions when the bridge starts
@@ -42,7 +46,7 @@ desktop-specific conversation navigation is not implemented.
 
 Actual device screenshots, enlarged without smoothing:
 
-| Overview | Agent details | Settings |
+| Overview | Agent details | Settings (before YOLO was added) |
 | --- | --- | --- |
 | ![Agent overview](docs/images/overview.png) | ![Agent details](docs/images/detail.png) | ![Vibration setting](docs/images/settings.png) |
 
@@ -69,12 +73,14 @@ are experimental and have not yet been verified on a Linux installation.
 
 ## Install a packaged Windows build
 
-Pushing a tag that matches the project version builds a per-user installer and
-creates a draft under GitHub **Releases**. A maintainer can review and publish
-that draft. The installer bundles the Python runtime, Tkinter companion, USB
-and Bluetooth bridge, and command-line tools; Python does not need to be
-installed separately. The Flipper `.fap` is a separate download and must still
-be installed on the device.
+Pushing a tag that matches the project version builds a per-user installer, a
+portable Windows ZIP, an experimental Linux tarball, and the Flipper `.fap` as
+a separate device-install asset. It creates a draft under GitHub **Releases**;
+a maintainer can review and publish that draft. The Windows packages bundle the
+Python runtime, Tkinter companion, USB and Bluetooth bridge, and command-line
+tools, so Python does not need to be installed separately. The portable ZIP
+can be extracted and run without an installer. The `.fap` must still be
+installed separately on the Flipper.
 
 The installer adds a Start menu shortcut but does not start Agent Deck at login
 or register Codex hooks automatically. To preview and then register the
@@ -418,7 +424,7 @@ approval and rejection dialogs show the request and require explicit confirmatio
 | Stop turn | Send `turn/interrupt` for that exact thread and active turn. It does not kill Codex or stop other sessions. |
 | Continue | Send exactly **“Continue with the next logical step.”** as a new user message to an idle thread. |
 | Approve once | Reply `accept` to the displayed command or supported file-change approval request. It never adds a permanent allow rule or grants session-wide approval. |
-| Reject | Reply `decline`, or `cancel` when Codex offers only cancellation. Cancellation stops the current turn; the review screen states this. Questions are answered in Codex on the PC. |
+| Reject | Reply `decline`, or `cancel` when Codex offers only cancellation. Cancellation stops the current turn; the review screen states this. Questions are answered in Codex on the PC unless YOLO can safely select their recommended options. |
 
 The background bridge owns one Codex control connection. Companion windows read
 its capabilities and send actions through a local SQLite mailbox, so both
@@ -443,11 +449,23 @@ once** available for the exact original pending request. Truncation only affects
 the displayed text. Non-ASCII text uses the same transliteration/replacement as
 other Flipper text and does not disable approval. The companion keeps Unicode
 text, displays up to 16 KiB, and marks longer previews as **Preview truncated**
-without disabling approval. Missing command
-or file-change details, stdin approvals, and session write grants also require
-review in Codex. The UI only offers decisions the request allows. Other request
-types, including structured questions and tool-specific permission grants, stay
-on the PC. No terminal approval keys are typed.
+without disabling approval. Missing command or file-change details, stdin
+approvals, and session write grants require review in Codex. YOLO also leaves
+session-wide write grants for manual review. The UI only offers
+decisions the request allows. Other request types, including tool-specific
+permission grants, stay on the PC. No terminal approval keys are typed.
+
+**YOLO mode** is an opt-in Flipper setting, saved on the device and off by
+default. While enabled, it accepts supported command and file-change approval
+requests once, using their exact Codex request IDs. It does not add an allow
+rule or change Codex permissions. For `request_user_input`, it replies only
+when the request is blocking and every question has exactly one option whose
+label ends in `(Recommended)`; it sends that exact label. It leaves free-text,
+secret, ambiguous, and otherwise unsupported questions unanswered for Codex.
+Directory-wide session write grants remain manual. Disconnecting either side
+disarms YOLO and saves it off; reconnecting does not silently turn it back on.
+Preview truncation or text conversion does not change the request being
+approved. The toggle and behavior are the same over USB and BLE.
 
 `--no-daemon` sessions, other independent app-server processes, remote/cloud
 sessions, and desktop-specific sessions are **notification-only** unless a known
